@@ -1,5 +1,6 @@
 const express = require('express');
 const assignmentController = require('../controllers/assignment.controller');
+const mapProviderController = require('../controllers/mapProvider.controller');
 const photoController = require('../controllers/photo.controller');
 const {
   categoryController,
@@ -23,7 +24,7 @@ const { asyncHandler } = require('../middleware/error');
 const { uploadCategoryIcon, uploadFeaturePhotos } = require('../config/upload');
 const { featurePhotoUploadRateLimit } = require('../middleware/offlineSyncRateLimit');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
-import { notificationMutationRateLimit } from '../middleware/workloadRateLimit';
+import { mapTileRateLimit, notificationMutationRateLimit } from '../middleware/workloadRateLimit';
 
 // ============================================================================
 // ASSIGNMENT ROUTES
@@ -336,6 +337,20 @@ settingsRouter.put(
 const offlineMapRouter = express.Router();
 offlineMapRouter.use(authenticate);
 offlineMapRouter.get('/current', asyncHandler(offlineMapController.getCurrent));
+offlineMapRouter.get(
+  '/current/download',
+  authorize('contributor', 'admin'),
+  asyncHandler(offlineMapController.downloadCurrent),
+);
+
+const mapProviderRouter = express.Router();
+mapProviderRouter.use(authenticate);
+mapProviderRouter.get('/provider', asyncHandler(mapProviderController.providerConfig));
+mapProviderRouter.get(
+  '/tiles/:layer/:z/:y/:x',
+  mapTileRateLimit,
+  asyncHandler(mapProviderController.tile),
+);
 
 // ============================================================================
 // USER MANAGEMENT ROUTES (Admin only)
@@ -488,6 +503,7 @@ module.exports = {
   categoryRouter,
   notificationRouter,
   offlineMapRouter,
+  mapProviderRouter,
   settingsRouter,
   userRouter,
 };

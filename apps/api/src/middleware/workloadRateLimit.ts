@@ -92,6 +92,14 @@ const mapAggregationRateLimit = buildWorkloadLimiter({
   message: 'Map aggregation is temporarily rate limited. Please retry later.',
 });
 
+const mapTileRateLimit = buildWorkloadLimiter({
+  policy: 'map-tiles',
+  maxSetting: 'RATE_LIMIT_MAP_TILE_MAX_REQUESTS',
+  fallback: 3000,
+  code: 'MAP_TILE_RATE_LIMITED',
+  message: 'Satellite map requests are temporarily rate limited. Please retry later.',
+});
+
 const notificationMutationRateLimit = buildWorkloadLimiter({
   policy: 'notification-mutation',
   maxSetting: 'RATE_LIMIT_NOTIFICATION_MAX_REQUESTS',
@@ -148,6 +156,7 @@ export {
   exportCreateRateLimit,
   importUploadRateLimit,
   mapAggregationRateLimit,
+  mapTileRateLimit,
   notificationMutationRateLimit,
   passwordResetRateLimit,
   contactVerificationRateLimit,

@@ -7,6 +7,7 @@ import { AppError } from '../middleware/error';
 import { publishRealtimeChanges } from '../realtime/realtimeEvents';
 import {
   getAccountDeletionEligibility as evaluateAccountDeletionEligibility,
+  remainingBlockersForDecision,
   scheduleAccountDeletion,
 } from '../services/accountDeletion.service';
 import {
@@ -128,6 +129,9 @@ const safePrivacyRow = (row: Record<string, unknown>, includeInternal = false) =
         deletion_execution_id: row.deletion_execution_id,
         deletion_execution_status: row.deletion_execution_status,
         deletion_failure_code: row.deletion_failure_code,
+        deletion_unfinished_work_decision: row.deletion_unfinished_work_decision,
+        deletion_responsibility_decision: row.deletion_responsibility_decision,
+        deletion_discard_counts: row.deletion_discard_counts,
       }
     : {}),
 });
@@ -555,7 +559,10 @@ const getPrivacyRequestForAdmin = async (req: Request, res: Response): Promise<v
             artifact.id AS export_artifact_id, artifact.status AS export_status,
             artifact.expires_at AS export_expires_at, artifact.failure_code AS export_failure_code,
             execution.id AS deletion_execution_id, execution.status AS deletion_execution_status,
-            execution.failure_code AS deletion_failure_code
+             execution.failure_code AS deletion_failure_code,
+             execution.unfinished_work_decision AS deletion_unfinished_work_decision,
+             execution.responsibility_decision AS deletion_responsibility_decision,
+             execution.discard_counts AS deletion_discard_counts
      FROM privacy_request request
      LEFT JOIN "user" account ON account.id = request.user_id
      LEFT JOIN privacy_export_artifact artifact ON artifact.privacy_request_id = request.id
@@ -730,12 +737,35 @@ const updatePrivacyRequestForAdmin = async (req: Request, res: Response): Promis
           retryable: false,
         });
       }
+      const unfinishedWorkDecision = String(req.body?.unfinished_work_decision ?? '');
+      const responsibilityDecision = String(req.body?.responsibility_decision ?? '');
+      if (!['require_resolution', 'discard_unapproved'].includes(unfinishedWorkDecision)) {
+        throw new AppError('Choose how unfinished work must be handled.', 422, {
+          code: 'ACCOUNT_DELETION_UNFINISHED_WORK_DECISION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        });
+      }
+      if (!['release', 'confirmed_transferred'].includes(responsibilityDecision)) {
+        throw new AppError('Choose how active responsibilities must be handled.', 422, {
+          code: 'ACCOUNT_DELETION_RESPONSIBILITY_DECISION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        });
+      }
+      const deletionDecision = {
+        unfinishedWorkDecision: unfinishedWorkDecision as
+          | 'require_resolution'
+          | 'discard_unapproved',
+        responsibilityDecision: responsibilityDecision as 'release' | 'confirmed_transferred',
+      };
       const eligibility = await evaluateAccountDeletionEligibility(
         { id: userId!, email: current.email as string | null, role: String(current.role) },
         client,
         current.request_details as Record<string, unknown>,
       );
-      if (!eligibility.operationally_eligible) {
+      const remainingBlockers = remainingBlockersForDecision(eligibility, deletionDecision);
+      if (remainingBlockers.length > 0) {
         throw new AppError(
           'Deletion is blocked until the listed responsibilities are resolved.',
           409,
@@ -750,6 +780,7 @@ const updatePrivacyRequestForAdmin = async (req: Request, res: Response): Promis
         await scheduleAccountDeletion(client, {
           requestId: req.params.requestId,
           userId: userId!,
+          ...deletionDecision,
         });
       } catch (error) {
         if (

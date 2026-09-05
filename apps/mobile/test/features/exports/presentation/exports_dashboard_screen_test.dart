@@ -377,7 +377,9 @@ void main() {
   );
 
   Future<void> pumpPicker(WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(home: buildExportAreaPickerForTest()));
+    await tester.pumpWidget(
+      ProviderScope(child: MaterialApp(home: buildExportAreaPickerForTest())),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -498,19 +500,21 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: FilledButton(
-                onPressed: () {
-                  Navigator.of(context).push<Map<String, dynamic>>(
-                    MaterialPageRoute<Map<String, dynamic>>(
-                      builder: (_) => buildExportAreaPickerForTest(),
-                    ),
-                  );
-                },
-                child: const Text('Open picker'),
+      ProviderScope(
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).push<Map<String, dynamic>>(
+                      MaterialPageRoute<Map<String, dynamic>>(
+                        builder: (_) => buildExportAreaPickerForTest(),
+                      ),
+                    );
+                  },
+                  child: const Text('Open picker'),
+                ),
               ),
             ),
           ),
@@ -627,18 +631,20 @@ void main() {
     Map<String, dynamic>? selectedPolygon;
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: FilledButton(
-                onPressed: () async {
-                  selectedPolygon = await showDialog<Map<String, dynamic>>(
-                    context: context,
-                    builder: (_) => buildExportAreaPickerForTest(),
-                  );
-                },
-                child: const Text('Open picker'),
+      ProviderScope(
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: FilledButton(
+                  onPressed: () async {
+                    selectedPolygon = await showDialog<Map<String, dynamic>>(
+                      context: context,
+                      builder: (_) => buildExportAreaPickerForTest(),
+                    );
+                  },
+                  child: const Text('Open picker'),
+                ),
               ),
             ),
           ),

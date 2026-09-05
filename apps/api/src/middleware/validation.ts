@@ -407,6 +407,7 @@ const settingsValidation = {
       .withMessage('Enter a valid Lebanese mobile number.'),
     body('office_hours').optional({ nullable: true }).trim(),
     body('help_text').optional({ nullable: true }).trim(),
+    body('hybrid_basemap_enabled').optional().isBoolean(),
   ] as ValidationChain[],
 };
 

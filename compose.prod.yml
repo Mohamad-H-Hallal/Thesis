@@ -16,6 +16,9 @@ services:
     volumes:
       - postgis_data:/var/lib/postgresql/data
       - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - default
+      - ai_data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -37,6 +40,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: runtime
     env_file:
       - ${API_ENV_FILE:-.env}
     environment:
@@ -172,6 +176,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: runtime
     init: true
     env_file:
       - ${API_ENV_FILE:-.env}
@@ -204,8 +209,23 @@ services:
       SUPER_ADMIN_PASSWORD_FILE: /run/secrets/super_admin_password
       AI_CALLBACK_SECRET: ""
       AI_CALLBACK_SECRET_FILE: /run/secrets/ai_callback_secret
+      AI_INTERNAL_API_SECRET: ""
+      AI_INTERNAL_API_SECRET_FILE: /run/secrets/ai_internal_api_secret
       API_DOCS_TOKEN: ""
       API_DOCS_TOKEN_FILE: /run/secrets/api_docs_token
+      PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: ""
+      PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/privacy_export_encryption_key
+      VERIFICATION_HMAC_SECRET: ""
+      VERIFICATION_HMAC_SECRET_FILE: /run/secrets/verification_hmac_secret
+      STORAGE_S3_ACCESS_KEY_ID: ""
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_s3_access_key_id
+      STORAGE_S3_SECRET_ACCESS_KEY: ""
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_s3_secret_access_key
+      ARCGIS_CLIENT_ID: ""
+      ARCGIS_CLIENT_ID_FILE: /run/secrets/arcgis_client_id
+      ARCGIS_CLIENT_SECRET: ""
+      ARCGIS_CLIENT_SECRET_FILE: /run/secrets/arcgis_client_secret
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_service_account
       MALWARE_SCANNER_MODE: clamav
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
@@ -222,10 +242,22 @@ services:
       - smtp_password
       - super_admin_password
       - ai_callback_secret
+      - ai_internal_api_secret
       - api_docs_token
+      - privacy_export_encryption_key
+      - verification_hmac_secret
+      - firebase_service_account
+      - oci_s3_access_key_id
+      - oci_s3_secret_access_key
+      - arcgis_client_id
+      - arcgis_client_secret
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
+      - ai_outputs:/app/ai-outputs:ro
+    networks:
+      - default
+      - ai_control
     depends_on:
       db:
         condition: service_healthy
@@ -265,10 +297,89 @@ services:
         max-size: 50m
         max-file: "10"
 
+  ai-server:
+    image: ${AI_SERVER_IMAGE:?Set an immutable production AI image with a sha256 digest}
+    platform: ${AI_SERVER_PLATFORM:-linux/amd64}
+    init: true
+    env_file:
+      - ${API_ENV_FILE:-.env}
+    environment:
+      AI_DRY_RUN: "false"
+      AI_SERVER_MAX_WORKERS: ${AI_MAX_CONCURRENT_RUNS:-2}
+      OUTPUTS_DIR: /app/outputs
+      AI_OUTPUT_DIR: /app/outputs
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${DB_RUNTIME_USER}
+      DB_PASSWORD: ""
+      AI_CALLBACK_SECRET: ""
+      AI_INTERNAL_API_SECRET: ""
+      GEE_PROJECT_ID: ${GEE_PROJECT_ID:?Set the operator-owned Earth Engine project ID}
+      GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:?Set the Earth Engine service-account email}
+      GEE_ASSET_FOLDER: ${GEE_ASSET_FOLDER:?Set the approved Earth Engine asset folder}
+      GEE_PRIVATE_KEY_PATH: /run/secrets/gee_service_account
+      GEE_KEY_FILE: /run/secrets/gee_service_account
+    secrets:
+      - db_runtime_password
+      - ai_callback_secret
+      - ai_internal_api_secret
+      - gee_service_account
+    volumes:
+      - ai_outputs:/app/outputs
+    networks:
+      - ai_control
+      - ai_data
+      - ai_egress
+    depends_on:
+      db:
+        condition: service_healthy
+      db-security:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        export DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/db_runtime_password)";
+        export AI_CALLBACK_SECRET="$$(tr -d '\r\n' < /run/secrets/ai_callback_secret)";
+        export AI_INTERNAL_API_SECRET="$$(tr -d '\r\n' < /run/secrets/ai_internal_api_secret)";
+        exec python -m uvicorn ai_server:app --host 0.0.0.0 --port 8000
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)); raise SystemExit(0 if data.get('status') == 'ok' and data.get('dry_run') is False else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    stop_grace_period: 90s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${AI_SERVER_PIDS_LIMIT:-512}
+    mem_limit: ${AI_SERVER_MEMORY_LIMIT:-12g}
+    cpus: ${AI_SERVER_CPU_LIMIT:-4}
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "10"
+
   workload-worker:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: runtime
     init: true
     env_file:
       - ${API_ENV_FILE:-.env}
@@ -281,13 +392,23 @@ services:
       MIGRATIONS_DIR: /app/infra/migrations
       DB_PASSWORD: ""
       DB_PASSWORD_FILE: /run/secrets/db_runtime_password
+      PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: ""
+      PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/privacy_export_encryption_key
+      STORAGE_S3_ACCESS_KEY_ID: ""
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_s3_access_key_id
+      STORAGE_S3_SECRET_ACCESS_KEY: ""
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_s3_secret_access_key
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     secrets:
       - db_runtime_password
+      - privacy_export_encryption_key
+      - oci_s3_access_key_id
+      - oci_s3_secret_access_key
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
+      - ai_outputs:/app/ai-outputs:ro
     depends_on:
       db:
         condition: service_healthy
@@ -317,6 +438,55 @@ services:
       options:
         max-size: 50m
         max-file: "10"
+
+  database-backup:
+    profiles: ["backup"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: backup
+    env_file:
+      - ${API_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ""
+      DB_PASSWORD_FILE: /run/secrets/db_admin_password
+      STORAGE_S3_ACCESS_KEY_ID: ""
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_backup_s3_access_key_id
+      STORAGE_S3_SECRET_ACCESS_KEY: ""
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_backup_s3_secret_access_key
+      BACKUP_ENCRYPTION_KEY_BASE64: ""
+      BACKUP_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/backup_encryption_key
+      BACKUP_TEMP_DIR: /backup-work
+    secrets:
+      - db_admin_password
+      - oci_backup_s3_access_key_id
+      - oci_backup_s3_secret_access_key
+      - backup_encryption_key
+    volumes:
+      - database_backup_work:/backup-work
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["node", "dist/jobs/runDatabaseBackup.js"]
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   nginx:
     image: nginxinc/nginx-unprivileged:1.31.3-alpine3.24@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5
@@ -461,15 +631,48 @@ secrets:
     file: ${SUPER_ADMIN_PASSWORD_SECRET_FILE:-./secrets/super_admin_password.txt}
   ai_callback_secret:
     file: ${AI_CALLBACK_SECRET_FILE_HOST:-./secrets/ai_callback_secret.txt}
+  ai_internal_api_secret:
+    file: ${AI_INTERNAL_API_SECRET_FILE_HOST:-./secrets/ai_internal_api_secret.txt}
   api_docs_token:
     file: ${API_DOCS_TOKEN_SECRET_FILE:-./secrets/api_docs_token.txt}
+  privacy_export_encryption_key:
+    file: ${PRIVACY_EXPORT_ENCRYPTION_KEY_SECRET_FILE:-./secrets/privacy_export_encryption_key.txt}
+  verification_hmac_secret:
+    file: ${VERIFICATION_HMAC_SECRET_FILE_HOST:-./secrets/verification_hmac_secret.txt}
+  firebase_service_account:
+    file: ${FIREBASE_SERVICE_ACCOUNT_SECRET_FILE:-./secrets/firebase_service_account.json}
+  oci_s3_access_key_id:
+    file: ${OCI_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/oci_s3_access_key_id.txt}
+  oci_s3_secret_access_key:
+    file: ${OCI_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/oci_s3_secret_access_key.txt}
+  oci_backup_s3_access_key_id:
+    file: ${OCI_BACKUP_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/oci_backup_s3_access_key_id.txt}
+  oci_backup_s3_secret_access_key:
+    file: ${OCI_BACKUP_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/oci_backup_s3_secret_access_key.txt}
+  backup_encryption_key:
+    file: ${BACKUP_ENCRYPTION_KEY_SECRET_FILE:-./secrets/backup_encryption_key.txt}
+  arcgis_client_id:
+    file: ${ARCGIS_CLIENT_ID_SECRET_FILE:-./secrets/arcgis_client_id.txt}
+  arcgis_client_secret:
+    file: ${ARCGIS_CLIENT_SECRET_FILE:-./secrets/arcgis_client_secret.txt}
+  gee_service_account:
+    file: ${GEE_SERVICE_ACCOUNT_SECRET_FILE:-./secrets/gee_service_account.json}
 
 volumes:
   postgis_data:
     name: ${POSTGIS_PROD_DATA_VOLUME:?Set POSTGIS_PROD_DATA_VOLUME}
   api_uploads:
   api_exports:
+  ai_outputs:
+  database_backup_work:
   clamav_signatures:
   valkey_data:
   letsencrypt:
   certbot_www:
+
+networks:
+  ai_control:
+    internal: true
+  ai_data:
+    internal: true
+  ai_egress: {}

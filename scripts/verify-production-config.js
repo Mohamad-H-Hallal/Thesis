@@ -22,6 +22,9 @@ const shouldRun = (component) =>
 const productionComposePath = path.join(root, 'compose.prod.yml');
 const observabilityComposePath = path.join(root, 'compose.observability.yml');
 const apiDockerfilePath = path.join(root, 'apps', 'api', 'Dockerfile');
+const apiEntrypointPath = path.join(root, 'apps', 'api', 'docker', 'entrypoint.sh');
+const apiEnvSchemaPath = path.join(root, 'apps', 'api', 'src', 'config', 'env.ts');
+const productionEnvExamplePath = path.join(root, '.env.prod.example');
 const databaseDockerfilePath = path.join(root, 'infra', 'db', 'Dockerfile.production');
 const certbotDockerfilePath = path.join(root, 'infra', 'certbot', 'Dockerfile.production');
 const prometheusDockerfilePath = path.join(
@@ -74,6 +77,9 @@ const assert = (condition, message) => {
 const productionCompose = read(productionComposePath);
 const observabilityCompose = read(observabilityComposePath);
 const apiDockerfile = read(apiDockerfilePath);
+const apiEntrypoint = read(apiEntrypointPath);
+const apiEnvSchema = read(apiEnvSchemaPath);
+const productionEnvExample = read(productionEnvExamplePath);
 const databaseDockerfile = read(databaseDockerfilePath);
 const certbotDockerfile = read(certbotDockerfilePath);
 const prometheusDockerfile = read(prometheusDockerfilePath);
@@ -99,6 +105,9 @@ const composeImages = `${productionCompose}\n${observabilityCompose}`
   .filter(Boolean);
 assert(composeImages.length >= 3, 'Expected production and observability image declarations');
 for (const image of composeImages) {
+  if (image.startsWith('${AI_SERVER_IMAGE:')) {
+    continue;
+  }
   assert(
     /@sha256:[a-f0-9]{64}$/.test(image),
     `Production image is not pinned by digest: ${image}`,
@@ -108,10 +117,15 @@ for (const image of workflowImages) {
   assert(/@sha256:[a-f0-9]{64}$/.test(image), `CI service image is not digest-pinned: ${image}`);
 }
 
-const dockerfileBases = apiDockerfile
-  .split(/\r?\n/)
-  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
-  .filter(Boolean);
+const apiDockerfileStages = new Set();
+const dockerfileBases = [];
+for (const line of apiDockerfile.split(/\r?\n/)) {
+  const instruction = line.match(/^\s*FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i);
+  if (!instruction) continue;
+  const image = instruction[1];
+  if (!apiDockerfileStages.has(image)) dockerfileBases.push(image);
+  if (instruction[2]) apiDockerfileStages.add(instruction[2]);
+}
 assert(dockerfileBases.length > 0, 'API Dockerfile has no base image');
 for (const image of dockerfileBases) {
   assert(/@sha256:[a-f0-9]{64}$/.test(image), `API base image is not digest-pinned: ${image}`);
@@ -168,8 +182,10 @@ assert(
   'Production observability must use the patched Prometheus image build',
 );
 assert(
-  prometheusDockerfile.includes('golang.org/x/text@v0.39.0') &&
-    prometheusDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+  prometheusDockerfile.includes('golang.org/x/crypto@v0.55.0') &&
+    prometheusDockerfile.includes('golang.org/x/mod@v0.40.0') &&
+    prometheusDockerfile.includes('golang.org/x/text@v0.41.0') &&
+    prometheusDockerfile.includes('google.golang.org/grpc@v1.83.1') &&
     prometheusDockerfile.includes('PROMETHEUS_SOURCE_SHA256='),
   'Prometheus security rebuild must pin source and patched Go modules',
 );
@@ -195,8 +211,10 @@ for (const [name, dockerfile, expectedPath] of [
     `Production observability must use the patched ${name} image build`,
   );
   assert(
-    dockerfile.includes('golang.org/x/text@v0.39.0') &&
-      dockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+    dockerfile.includes('golang.org/x/crypto@v0.55.0') &&
+      dockerfile.includes('golang.org/x/mod@v0.40.0') &&
+      dockerfile.includes('golang.org/x/text@v0.41.0') &&
+      dockerfile.includes('google.golang.org/grpc@v1.83.1') &&
       dockerfile.includes('SOURCE_SHA256='),
     `${name} security rebuild must pin source and patched Go modules`,
   );
@@ -221,8 +239,10 @@ assert(
   'Production observability must use the patched Loki image build',
 );
 assert(
-  lokiDockerfile.includes('golang.org/x/text@v0.39.0') &&
-    lokiDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+  lokiDockerfile.includes('golang.org/x/crypto@v0.55.0') &&
+    lokiDockerfile.includes('golang.org/x/mod@v0.40.0') &&
+    lokiDockerfile.includes('golang.org/x/text@v0.41.0') &&
+    lokiDockerfile.includes('google.golang.org/grpc@v1.83.1') &&
     lokiDockerfile.includes('LOKI_SOURCE_SHA256=') &&
     lokiDockerfile.includes('go mod vendor'),
   'Loki security rebuild must pin source, patched Go modules, and vendor state',
@@ -250,16 +270,24 @@ assert(
     alloyDockerfile.includes(
       'ALLOY_SOURCE_SHA256=6ba0318a3eb0da0a67b7567e97720e880e5ba0dd880e3ef73f68227f2b8c7150',
     ) &&
-    alloyDockerfile.includes('golang.org/x/text@v0.39.0') &&
-    alloyDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+    alloyDockerfile.includes('github.com/apache/thrift@v0.24.0') &&
+    alloyDockerfile.includes('github.com/go-git/go-git/v5@v5.19.2') &&
+    alloyDockerfile.includes('golang.org/x/crypto@v0.55.0') &&
+    alloyDockerfile.includes('golang.org/x/mod@v0.40.0') &&
+    alloyDockerfile.includes('golang.org/x/text@v0.41.0') &&
+    alloyDockerfile.includes('google.golang.org/grpc@v1.83.1') &&
+    alloyDockerfile.includes('bsdutils=1:2.39.3-9ubuntu6.6') &&
+    alloyDockerfile.includes('libp11-kit0=0.25.3-4ubuntu2.2') &&
+    alloyDockerfile.includes('libssl3t64=3.0.13-0ubuntu3.15') &&
+    alloyDockerfile.includes('libsystemd0=255.4-1ubuntu8.17') &&
+    alloyDockerfile.includes('perl-base=5.38.2-3.2ubuntu0.4') &&
     alloyDockerfile.includes('libc6=2.39-0ubuntu8.8') &&
-    alloyDockerfile.includes('libpam0g=1.5.3-5ubuntu5.6') &&
+    alloyDockerfile.includes('libpam0g=1.5.3-5ubuntu5.7') &&
     alloyDockerfile.includes('tar=1.35+dfsg-3ubuntu0.4'),
   'Alloy security rebuild must pin source, patched Go modules, and OS updates',
 );
 const expectedAlloyVulnerabilities = [
   'CVE-2026-33997',
-  'CVE-2026-34040',
   'CVE-2026-41568',
   'CVE-2026-41567',
   'CVE-2026-42306',
@@ -271,7 +299,7 @@ assert(
       .map((statement) => statement.vulnerability?.name)
       .sort()
       .join(',') === [...expectedAlloyVulnerabilities].sort().join(','),
-  'Alloy VEX must contain exactly the five reviewed upstream findings',
+  'Alloy VEX must contain exactly the four reviewed upstream findings',
 );
 for (const statement of alloyVexStatements) {
   assert(
@@ -289,8 +317,9 @@ assert(
   'Alloy VEX security decision has expired',
 );
 const expectedAlloyMediumPolicyIds = [
-  'CVE-2026-13757',
-  'CVE-2026-27456',
+  'CVE-2026-18374',
+  'CVE-2026-18477',
+  'CVE-2026-18508',
   'CVE-2026-33997',
   'CVE-2026-41568',
 ];
@@ -300,13 +329,22 @@ assert(
     alloyMediumPolicy.owner.trim().length > 0 &&
     /^\d{4}-\d{2}-\d{2}$/.test(alloyMediumPolicy.reviewBy) &&
     Date.parse(`${alloyMediumPolicy.reviewBy}T00:00:00Z`) > Date.now() &&
-    alloyMediumPolicy.findings?.length === 10 &&
+    alloyMediumPolicy.findings?.length === 6 &&
     [...new Set(alloyMediumPolicy.findings.map(({ id }) => id))]
       .sort()
       .join(',') === expectedAlloyMediumPolicyIds.sort().join(',') &&
     alloyMediumPolicy.findings.every(
-      ({ decision }) =>
+      ({ decision, rationale, mitigation, evidence }) =>
         decision === 'accepted_with_mitigation' || decision === 'not_affected',
+    ) &&
+    alloyMediumPolicy.findings.every(
+      ({ rationale, mitigation, evidence }) =>
+        typeof rationale === 'string' &&
+        rationale.length >= 40 &&
+        typeof mitigation === 'string' &&
+        mitigation.length >= 40 &&
+        typeof evidence === 'string' &&
+        evidence.length >= 10,
     ),
   'Alloy Medium risk acceptance is missing, changed, or expired',
 );
@@ -314,6 +352,24 @@ assert(
   apiDockerfile.includes('/usr/local/lib/node_modules/npm') &&
     apiDockerfile.includes('/usr/local/bin/npx'),
   'Production API runtime must remove package-management tooling',
+);
+
+const envSchemaBlock = apiEnvSchema
+  .split('const envSchema = Joi.object({', 2)[1]
+  ?.split('}).unknown(true);', 1)[0];
+assert(envSchemaBlock, 'Unable to inspect the API environment schema');
+const apiEnvironmentKeys = [
+  ...envSchemaBlock.matchAll(/^\s{2}([A-Z][A-Z0-9_]+):/gm),
+].map((match) => match[1]);
+const documentedEnvironmentKeys = new Set(
+  [...productionEnvExample.matchAll(/^([A-Z][A-Z0-9_]+)=/gm)].map((match) => match[1]),
+);
+const undocumentedEnvironmentKeys = apiEnvironmentKeys.filter(
+  (key) => !documentedEnvironmentKeys.has(key),
+);
+assert(
+  undocumentedEnvironmentKeys.length === 0,
+  `Production environment template is missing API settings: ${undocumentedEnvironmentKeys.join(', ')}`,
 );
 
 assert(!/redis(?:s)?:\/\/[^\s/]*@/i.test(productionCompose), 'Redis credential found in URL');
@@ -327,6 +383,108 @@ assert(
     productionCompose.includes('db-security') &&
     productionCompose.includes('db_runtime_password'),
   'Restricted database runtime role is not enforced',
+);
+for (const [variable, secretName] of [
+  ['DB_PASSWORD', 'db_runtime_password'],
+  ['JWT_SECRET', 'jwt_secret'],
+  ['JWT_SECRET_CURRENT', 'jwt_secret'],
+  ['JWT_REFRESH_SECRET', 'jwt_refresh_secret'],
+  ['JWT_REFRESH_SECRET_CURRENT', 'jwt_refresh_secret'],
+  ['REDIS_PASSWORD', 'redis_password'],
+  ['METRICS_TOKEN', 'metrics_token'],
+  ['SMTP_PASS', 'smtp_password'],
+  ['SUPER_ADMIN_PASSWORD', 'super_admin_password'],
+  ['AI_CALLBACK_SECRET', 'ai_callback_secret'],
+  ['AI_INTERNAL_API_SECRET', 'ai_internal_api_secret'],
+  ['API_DOCS_TOKEN', 'api_docs_token'],
+  ['PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64', 'privacy_export_encryption_key'],
+  ['VERIFICATION_HMAC_SECRET', 'verification_hmac_secret'],
+  ['STORAGE_S3_ACCESS_KEY_ID', 'oci_s3_access_key_id'],
+  ['STORAGE_S3_SECRET_ACCESS_KEY', 'oci_s3_secret_access_key'],
+  ['ARCGIS_CLIENT_ID', 'arcgis_client_id'],
+  ['ARCGIS_CLIENT_SECRET', 'arcgis_client_secret'],
+]) {
+  assert(
+    apiEntrypoint.includes(`load_secret_var ${variable}`),
+    `${variable} is not loaded from a Docker secret`,
+  );
+  assert(
+    productionCompose.includes(`${variable}_FILE: /run/secrets/${secretName}`) &&
+      productionCompose.includes(`${secretName}:`),
+    `${variable} Docker secret wiring is incomplete`,
+  );
+}
+assert(
+  apiEntrypoint.includes('load_secret_var BACKUP_ENCRYPTION_KEY_BASE64') &&
+    productionCompose.includes(
+      'BACKUP_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/backup_encryption_key',
+    ) &&
+    productionCompose.includes(
+      'STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_backup_s3_access_key_id',
+    ) &&
+    productionCompose.includes(
+      'STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_backup_s3_secret_access_key',
+    ),
+  'Dedicated encrypted database-backup secret wiring is incomplete',
+);
+const backupSection = productionCompose
+  .split(/\n  database-backup:\s*\n/, 2)[1]
+  ?.split(/\n  nginx:\s*\n/, 1)[0];
+assert(backupSection, 'Encrypted database-backup service is missing');
+assert(
+  !/(oci_s3_access_key_id|oci_s3_secret_access_key|privacy_export_encryption_key)/i.test(
+    backupSection,
+  ),
+  'Database backups must use credentials and an encryption key separate from application storage',
+);
+assert(
+  /^STORAGE_DRIVER=s3$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_REGION=me-jeddah-1$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_SERVER_SIDE_ENCRYPTION=AES256$/m.test(productionEnvExample),
+  'Production object storage must use the encrypted OCI Jeddah S3-compatible driver',
+);
+assert(
+  /^REALTIME_V2_ENABLED=true$/m.test(productionEnvExample) &&
+    /^REALTIME_LEGACY_BROADCAST_ENABLED=false$/m.test(productionEnvExample) &&
+    /^REALTIME_POLLING_FALLBACK_ENABLED=false$/m.test(productionEnvExample),
+  'Production real-time v2 rollout flags are unsafe',
+);
+assert(
+  /^AI_PIPELINE_ENABLED=true$/m.test(productionEnvExample) &&
+    /^AI_SERVER_IMAGE=.+@sha256:/m.test(productionEnvExample) &&
+    /^AI_SERVER_SOURCE_COMMIT=[a-f0-9]{40}$/m.test(productionEnvExample) &&
+    /^GEE_PROJECT_ID=$/m.test(productionEnvExample) &&
+    /^GEE_SERVICE_ACCOUNT=$/m.test(productionEnvExample) &&
+    /^GEE_ASSET_FOLDER=$/m.test(productionEnvExample),
+  'Production AI must be enabled and configured with an immutable image digest',
+);
+const aiServerSection = productionCompose
+  .split(/\n  ai-server:\s*\n/, 2)[1]
+  ?.split(/\n  workload-worker:\s*\n/, 1)[0];
+assert(aiServerSection, 'Hardened production AI service is missing');
+assert(
+  aiServerSection.includes('image: ${AI_SERVER_IMAGE:') &&
+    aiServerSection.includes('AI_DRY_RUN: "false"') &&
+    aiServerSection.includes('GEE_PRIVATE_KEY_PATH: /run/secrets/gee_service_account') &&
+    aiServerSection.includes('AI_INTERNAL_API_SECRET') &&
+    aiServerSection.includes('read_only: true') &&
+    aiServerSection.includes('no-new-privileges:true') &&
+    !/^\s*ports:/m.test(aiServerSection),
+  'Production AI image, secret, network or container hardening is incomplete',
+);
+assert(
+  apiEntrypoint.includes('load_secret_var AI_INTERNAL_API_SECRET') &&
+    productionCompose.includes(
+      'AI_INTERNAL_API_SECRET_FILE: /run/secrets/ai_internal_api_secret',
+    ) &&
+    productionCompose.includes('ai_internal_api_secret:'),
+  'AI internal service secret-file wiring is incomplete',
+);
+assert(
+  productionCompose.includes(
+    'FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_service_account',
+  ) && productionCompose.includes('firebase_service_account:'),
+  'Firebase service-account secret wiring is incomplete',
 );
 const workerSection = productionCompose
   .split(/\n  workload-worker:\s*\n/, 2)[1]
@@ -385,6 +543,11 @@ const composeEnvironment = {
   POSTGRES_USER: 'gis_owner',
   POSTGRES_DB: 'gis_app_prod',
   POSTGIS_PROD_DATA_VOLUME: 'gis_phase5_config_validation',
+  AI_SERVER_IMAGE:
+    'registry.example.invalid/terraleb-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  GEE_PROJECT_ID: 'terraleb-production',
+  GEE_SERVICE_ACCOUNT: 'terraleb-ai@example.invalid',
+  GEE_ASSET_FOLDER: 'projects/terraleb-production/assets/terraleb',
 };
 for (const name of [
   'POSTGRES_PASSWORD',
@@ -401,6 +564,9 @@ for (const name of [
   'SMTP_PASS',
   'SUPER_ADMIN_PASSWORD',
   'AI_CALLBACK_SECRET',
+  'AI_INTERNAL_API_SECRET',
+  'PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64',
+  'VERIFICATION_HMAC_SECRET',
 ]) {
   composeEnvironment[name] = '';
 }

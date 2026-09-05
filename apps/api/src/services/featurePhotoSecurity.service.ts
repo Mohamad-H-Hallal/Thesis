@@ -100,9 +100,8 @@ export const resolveStoredPhotoPath = (filePath: unknown): string | null => {
     return null;
   }
   const resolved = storageAdapter.resolve(filePath, ['uploads']);
-  return resolved &&
-    ALLOWED_PHOTO_KEY_PREFIXES.some((prefix) => resolved.key.startsWith(prefix))
-    ? resolved.localPath
+  return resolved && ALLOWED_PHOTO_KEY_PREFIXES.some((prefix) => resolved.key.startsWith(prefix))
+    ? resolved.reference
     : null;
 };
 

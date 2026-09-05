@@ -1,5 +1,11 @@
 # TerraLeb map and regional-hosting decision
 
+> **Superseded for execution on 2026-08-25:** use
+> [`TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md`](TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md)
+> for the current repository baseline, corrected OCI USD pricing, final storage
+> decision and updated Codex prompt. This older record remains for decision
+> history.
+
 Status: **owner decision and engineering execution plan - not production approval**
 
 Prepared: **2026-08-19**

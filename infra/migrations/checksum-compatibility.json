@@ -50,6 +50,14 @@
       "reason": "The pre-release development database applied the initial compliance schema before retention execution, GIS provenance, and project AI governance extensions were added; migration 0060 idempotently reconciles those extensions."
     },
     {
+      "filename": "0063_privacy_request_submitted_state.sql",
+      "sourceChecksum": "9c3ac0a6993e5d75d57b22c715cf3c5b06ef20a82811165a2c89660746395a23",
+      "acceptedChecksums": [
+        "77fb3e756b8ff04ef9f58ae584404c731132974b124f34038fd770f6988d3691"
+      ],
+      "reason": "The pre-release development database applied an earlier working-copy revision of the submitted-state transition; migrations 0066 through 0068 replace the intermediate status/index rules with the current fail-closed workflow."
+    },
+    {
       "filename": "0064_one_active_privacy_request_per_user.sql",
       "sourceChecksum": "412d261b4cba5c74ab599ff63a394e02bff77f5e1adbdec1eacdb22002874d17",
       "acceptedChecksums": [

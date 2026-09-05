@@ -92,6 +92,23 @@ export interface EnvConfig {
   ARCHIVE_MAX_EXPANDED_BYTES: number;
   ARCHIVE_MAX_ENTRY_BYTES: number;
   ARCHIVE_MAX_COMPRESSION_RATIO: number;
+  STORAGE_DRIVER: 'local' | 's3';
+  STORAGE_TEMP_DIR: string;
+  STORAGE_MAX_OBJECT_BYTES: number;
+  STORAGE_S3_ENDPOINT: string;
+  STORAGE_S3_REGION: string;
+  STORAGE_S3_FORCE_PATH_STYLE: boolean;
+  STORAGE_S3_ACCESS_KEY_ID: string;
+  STORAGE_S3_SECRET_ACCESS_KEY: string;
+  STORAGE_S3_UPLOADS_BUCKET: string;
+  STORAGE_S3_EXPORTS_BUCKET: string;
+  STORAGE_S3_OFFLINE_BUCKET: string;
+  STORAGE_S3_AI_BUCKET: string;
+  STORAGE_S3_BACKUPS_BUCKET: string;
+  STORAGE_S3_PREFIX: string;
+  STORAGE_S3_REQUEST_TIMEOUT_MS: number;
+  STORAGE_S3_MAX_ATTEMPTS: number;
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256';
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
@@ -105,6 +122,10 @@ export interface EnvConfig {
   ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: string;
   ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: string;
   MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: string;
+  RETAINED_GIS_RECORDS_APPROVAL_REFERENCE: string;
+  ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE: string;
+  FREE_TEXT_TREATMENT_APPROVAL_REFERENCE: string;
+  BACKUP_AGEING_APPROVAL_REFERENCE: string;
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
   ANDROID_PUSH_NOTIFICATIONS_ENABLED: boolean;
@@ -166,7 +187,27 @@ export interface EnvConfig {
   APP_PUBLIC_API_URL: string;
   AI_CALLBACK_BASE_URL: string;
   AI_CALLBACK_SECRET: string;
+  AI_INTERNAL_API_SECRET: string;
   AI_SERVER_TIMEOUT_MS: number;
+  AI_MAX_CONCURRENT_RUNS: number;
+  AI_MAX_RUNS_PER_PROJECT_PER_DAY: number;
+  AI_MAX_ESTIMATED_COST_USD_PER_RUN: number;
+  ARCGIS_ONLINE_ENABLED: boolean;
+  ARCGIS_CLIENT_ID: string;
+  ARCGIS_CLIENT_SECRET: string;
+  ARCGIS_TOKEN_URL: string;
+  ARCGIS_IMAGERY_TILE_URL: string;
+  ARCGIS_REFERENCE_TILE_URL: string;
+  ARCGIS_ATTRIBUTION_URL: string;
+  ARCGIS_REQUEST_TIMEOUT_MS: number;
+  ARCGIS_TOKEN_REFRESH_SKEW_SECONDS: number;
+  ARCGIS_MAX_TILE_BYTES: number;
+  ARCGIS_DAILY_TILE_SOFT_LIMIT: number;
+  ARCGIS_ALLOWED_HOSTS: string;
+  MAP_PROVIDER_USER_AGENT: string;
+  OFFLINE_PACKAGE_ENABLED: boolean;
+  OFFLINE_PACKAGE_DIR: string;
+  OFFLINE_PACKAGE_MAX_BYTES: number;
 }
 
 export interface WorkloadWorkerEnvConfig {
@@ -179,6 +220,23 @@ export interface WorkloadWorkerEnvConfig {
   DB_MAX_CONNECTIONS: number;
   WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
   WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
+  STORAGE_DRIVER: 'local' | 's3';
+  STORAGE_TEMP_DIR: string;
+  STORAGE_MAX_OBJECT_BYTES: number;
+  STORAGE_S3_ENDPOINT: string;
+  STORAGE_S3_REGION: string;
+  STORAGE_S3_FORCE_PATH_STYLE: boolean;
+  STORAGE_S3_ACCESS_KEY_ID: string;
+  STORAGE_S3_SECRET_ACCESS_KEY: string;
+  STORAGE_S3_UPLOADS_BUCKET: string;
+  STORAGE_S3_EXPORTS_BUCKET: string;
+  STORAGE_S3_OFFLINE_BUCKET: string;
+  STORAGE_S3_AI_BUCKET: string;
+  STORAGE_S3_BACKUPS_BUCKET: string;
+  STORAGE_S3_PREFIX: string;
+  STORAGE_S3_REQUEST_TIMEOUT_MS: number;
+  STORAGE_S3_MAX_ATTEMPTS: number;
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256';
   PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: string;
   PRIVACY_EXPORT_TTL_HOURS: number | null;
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: string;
@@ -186,6 +244,10 @@ export interface WorkloadWorkerEnvConfig {
   ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: string;
   ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: string;
   MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: string;
+  RETAINED_GIS_RECORDS_APPROVAL_REFERENCE: string;
+  ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE: string;
+  FREE_TEXT_TREATMENT_APPROVAL_REFERENCE: string;
+  BACKUP_AGEING_APPROVAL_REFERENCE: string;
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
   LOG_DIR: string;
@@ -367,6 +429,33 @@ const envSchema = Joi.object({
     .default(50 * 1024 * 1024),
   ARCHIVE_MAX_COMPRESSION_RATIO: Joi.number().integer().min(1).max(10000).default(100),
 
+  STORAGE_DRIVER: Joi.string().valid('local', 's3').default('local'),
+  STORAGE_TEMP_DIR: Joi.string().trim().min(1).default('/tmp/terraleb-storage'),
+  STORAGE_MAX_OBJECT_BYTES: Joi.number()
+    .integer()
+    .min(5 * 1024 * 1024)
+    .max(5 * 1024 * 1024 * 1024)
+    .default(1024 * 1024 * 1024),
+  STORAGE_S3_ENDPOINT: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_REGION: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_FORCE_PATH_STYLE: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  STORAGE_S3_ACCESS_KEY_ID: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_SECRET_ACCESS_KEY: Joi.string().allow('').default(''),
+  STORAGE_S3_UPLOADS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_EXPORTS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_OFFLINE_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_AI_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_BACKUPS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_PREFIX: Joi.string().trim().allow('').max(200).default('terraleb'),
+  STORAGE_S3_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
+  STORAGE_S3_MAX_ATTEMPTS: Joi.number().integer().min(1).max(10).default(3),
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256').default('AES256'),
+
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
@@ -378,7 +467,10 @@ const envSchema = Joi.object({
     .default('primary'),
   PRIVACY_EXPORT_TTL_HOURS: Joi.number().integer().min(1).max(168).allow(null).default(null),
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
-  PRIVACY_EXPORT_MAX_BYTES: Joi.number().integer().min(1024).default(50 * 1024 * 1024),
+  PRIVACY_EXPORT_MAX_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .default(50 * 1024 * 1024),
   ACCOUNT_DELETION_EXECUTION_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
@@ -388,6 +480,10 @@ const envSchema = Joi.object({
   ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  RETAINED_GIS_RECORDS_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  FREE_TEXT_TREATMENT_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  BACKUP_AGEING_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
   PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
     .truthy('true')
@@ -501,7 +597,59 @@ const envSchema = Joi.object({
   APP_PUBLIC_API_URL: Joi.string().allow('').default('http://localhost:3000'),
   AI_CALLBACK_BASE_URL: Joi.string().allow('').default(''),
   AI_CALLBACK_SECRET: Joi.string().allow('').default('dev-ai-callback-secret-change-me'),
+  AI_INTERNAL_API_SECRET: Joi.string().allow('').default('dev-ai-internal-secret-change-me'),
   AI_SERVER_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
+  AI_MAX_CONCURRENT_RUNS: Joi.number().integer().min(1).max(32).default(2),
+  AI_MAX_RUNS_PER_PROJECT_PER_DAY: Joi.number().integer().min(1).max(100).default(4),
+  AI_MAX_ESTIMATED_COST_USD_PER_RUN: Joi.number().min(0).max(100000).default(25),
+  ARCGIS_ONLINE_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  ARCGIS_CLIENT_ID: Joi.string().trim().allow('').default(''),
+  ARCGIS_CLIENT_SECRET: Joi.string().allow('').default(''),
+  ARCGIS_TOKEN_URL: Joi.string().trim().default('https://www.arcgis.com/sharing/rest/oauth2/token'),
+  ARCGIS_IMAGERY_TILE_URL: Joi.string()
+    .trim()
+    .default(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    ),
+  ARCGIS_REFERENCE_TILE_URL: Joi.string()
+    .trim()
+    .default(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    ),
+  ARCGIS_ATTRIBUTION_URL: Joi.string()
+    .trim()
+    .default(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/attribution',
+    ),
+  ARCGIS_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(10000),
+  ARCGIS_TOKEN_REFRESH_SKEW_SECONDS: Joi.number().integer().min(30).max(3600).default(300),
+  ARCGIS_MAX_TILE_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .max(20 * 1024 * 1024)
+    .default(5 * 1024 * 1024),
+  ARCGIS_DAILY_TILE_SOFT_LIMIT: Joi.number().integer().min(1).default(100000),
+  ARCGIS_ALLOWED_HOSTS: Joi.string()
+    .trim()
+    .default('www.arcgis.com,services.arcgisonline.com,server.arcgisonline.com'),
+  MAP_PROVIDER_USER_AGENT: Joi.string().trim().min(10).max(300).default('TerraLeb-development/1.0'),
+  OFFLINE_PACKAGE_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  OFFLINE_PACKAGE_DIR: Joi.string().trim().min(1).default('./offline-packages'),
+  OFFLINE_PACKAGE_MAX_BYTES: Joi.number()
+    .integer()
+    .min(1024 * 1024)
+    .max(20 * 1024 * 1024 * 1024)
+    .default(5 * 1024 * 1024 * 1024),
 }).unknown(true);
 
 const unsafeProductionSecret = (value: unknown): boolean => {
@@ -553,6 +701,63 @@ const validateProductionOrigin = (origin: string): boolean => {
     );
   } catch {
     return false;
+  }
+};
+
+const validateSecureProviderUrl = (value: unknown): boolean => {
+  try {
+    const parsed = new URL(String(value));
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+};
+
+const validateProductionStorage = (value: Record<string, unknown>, errorPrefix: string): void => {
+  if (value.STORAGE_DRIVER !== 's3') {
+    throw new Error(`${errorPrefix}: production requires STORAGE_DRIVER=s3`);
+  }
+  if (value.STORAGE_S3_REGION !== 'me-jeddah-1') {
+    throw new Error(`${errorPrefix}: OCI production storage must use region me-jeddah-1`);
+  }
+  if (!validateSecureProviderUrl(value.STORAGE_S3_ENDPOINT)) {
+    throw new Error(`${errorPrefix}: STORAGE_S3_ENDPOINT must be an HTTPS URL`);
+  }
+  const endpoint = new URL(String(value.STORAGE_S3_ENDPOINT));
+  if (
+    !endpoint.hostname.endsWith('.compat.objectstorage.me-jeddah-1.oraclecloud.com') ||
+    endpoint.pathname !== '/' ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    throw new Error(
+      `${errorPrefix}: STORAGE_S3_ENDPOINT must be the OCI Jeddah S3 compatibility endpoint`,
+    );
+  }
+  if (
+    unsafeProductionIdentifier(value.STORAGE_S3_ACCESS_KEY_ID) ||
+    unsafeProductionSecret(value.STORAGE_S3_SECRET_ACCESS_KEY)
+  ) {
+    throw new Error(`${errorPrefix}: OCI S3 credentials are missing or unsafe`);
+  }
+  const bucketPattern = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+  const buckets = [
+    value.STORAGE_S3_UPLOADS_BUCKET,
+    value.STORAGE_S3_EXPORTS_BUCKET,
+    value.STORAGE_S3_OFFLINE_BUCKET,
+    value.STORAGE_S3_AI_BUCKET,
+    value.STORAGE_S3_BACKUPS_BUCKET,
+  ].map((bucket) => String(bucket ?? '').trim());
+  if (buckets.some((bucket) => !bucketPattern.test(bucket)) || new Set(buckets).size !== 5) {
+    throw new Error(
+      `${errorPrefix}: production requires five distinct DNS-compatible private storage buckets`,
+    );
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{0,199}$/.test(String(value.STORAGE_S3_PREFIX))) {
+    throw new Error(`${errorPrefix}: STORAGE_S3_PREFIX is invalid`);
+  }
+  if (value.STORAGE_S3_SERVER_SIDE_ENCRYPTION !== 'AES256') {
+    throw new Error(`${errorPrefix}: OCI object storage must request AES256 encryption`);
   }
 };
 
@@ -658,6 +863,21 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
 
   if (value.NODE_ENV === 'production') {
+    validateProductionStorage(value, 'Environment validation failed');
+    if (
+      !value.REALTIME_V2_ENABLED ||
+      value.REALTIME_LEGACY_BROADCAST_ENABLED ||
+      value.REALTIME_POLLING_FALLBACK_ENABLED
+    ) {
+      throw new Error(
+        'Environment validation failed: production requires real-time v2 with legacy broadcasting and polling fallback disabled',
+      );
+    }
+    if (Number(value.STORAGE_MAX_OBJECT_BYTES) < Number(value.OFFLINE_PACKAGE_MAX_BYTES)) {
+      throw new Error(
+        'Environment validation failed: STORAGE_MAX_OBJECT_BYTES must cover OFFLINE_PACKAGE_MAX_BYTES',
+      );
+    }
     const privacyExportKey = Buffer.from(value.PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64, 'base64');
     if (
       privacyExportKey.length !== 32 ||
@@ -674,10 +894,14 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
         value.ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE,
         value.ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE,
         value.MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE,
+        value.RETAINED_GIS_RECORDS_APPROVAL_REFERENCE,
+        value.ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE,
+        value.FREE_TEXT_TREATMENT_APPROVAL_REFERENCE,
+        value.BACKUP_AGEING_APPROVAL_REFERENCE,
       ].some((reference: string) => !reference)
     ) {
       throw new Error(
-        'Environment validation failed: enabled account deletion requires policy, retention, and masked-attribution approval references',
+        'Environment validation failed: enabled account deletion requires policy, retention, retained-record, masked-attribution, media/location, free-text, and backup-ageing approval references',
       );
     }
     if (value.LEGAL_DRAFTS_PUBLIC_ENABLED) {
@@ -842,6 +1066,67 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
         'Environment validation failed: AI_CALLBACK_SECRET must not be a placeholder in production',
       );
     }
+    if (unsafeProductionSecret(value.AI_INTERNAL_API_SECRET)) {
+      throw new Error(
+        'Environment validation failed: AI_INTERNAL_API_SECRET must be a strong non-placeholder production secret',
+      );
+    }
+    if (
+      !value.AI_PIPELINE_ENABLED ||
+      !String(value.AI_SERVER_URL).trim() ||
+      unsafeProductionSecret(value.AI_CALLBACK_SECRET) ||
+      unsafeProductionSecret(value.AI_INTERNAL_API_SECRET)
+    ) {
+      throw new Error(
+        'Environment validation failed: production AI requires an enabled internal service URL and strong callback secret',
+      );
+    }
+    if (value.ARCGIS_ONLINE_ENABLED) {
+      if (
+        unsafeProductionIdentifier(value.ARCGIS_CLIENT_ID) ||
+        unsafeProductionSecret(value.ARCGIS_CLIENT_SECRET)
+      ) {
+        throw new Error(
+          'Environment validation failed: enabled ArcGIS online maps require operator-owned credentials',
+        );
+      }
+      for (const [name, configuredUrl] of [
+        ['ARCGIS_TOKEN_URL', value.ARCGIS_TOKEN_URL],
+        ['ARCGIS_IMAGERY_TILE_URL', value.ARCGIS_IMAGERY_TILE_URL],
+        ['ARCGIS_REFERENCE_TILE_URL', value.ARCGIS_REFERENCE_TILE_URL],
+        ['ARCGIS_ATTRIBUTION_URL', value.ARCGIS_ATTRIBUTION_URL],
+      ]) {
+        if (!validateSecureProviderUrl(configuredUrl)) {
+          throw new Error(`Environment validation failed: ${name} must be an HTTPS URL`);
+        }
+      }
+      const allowedHosts = new Set(
+        String(value.ARCGIS_ALLOWED_HOSTS)
+          .split(',')
+          .map((host) => host.trim().toLowerCase())
+          .filter(Boolean),
+      );
+      if (allowedHosts.size === 0) {
+        throw new Error('Environment validation failed: ARCGIS_ALLOWED_HOSTS is required');
+      }
+      for (const [name, configuredUrl] of [
+        ['ARCGIS_TOKEN_URL', value.ARCGIS_TOKEN_URL],
+        ['ARCGIS_IMAGERY_TILE_URL', value.ARCGIS_IMAGERY_TILE_URL],
+        ['ARCGIS_REFERENCE_TILE_URL', value.ARCGIS_REFERENCE_TILE_URL],
+        ['ARCGIS_ATTRIBUTION_URL', value.ARCGIS_ATTRIBUTION_URL],
+      ]) {
+        if (!allowedHosts.has(new URL(String(configuredUrl)).hostname.toLowerCase())) {
+          throw new Error(
+            `Environment validation failed: ${name} host is not listed in ARCGIS_ALLOWED_HOSTS`,
+          );
+        }
+      }
+    }
+    if (/development|replace|example\.com/i.test(String(value.MAP_PROVIDER_USER_AGENT))) {
+      throw new Error(
+        'Environment validation failed: MAP_PROVIDER_USER_AGENT must identify the production operator',
+      );
+    }
   }
 
   if (value.NODE_ENV === 'production' && value.MALWARE_SCANNER_MODE !== 'clamav') {
@@ -908,6 +1193,32 @@ const workloadWorkerEnvSchema = Joi.object({
     .falsy('false')
     .falsy('0')
     .default(false),
+  STORAGE_DRIVER: Joi.string().valid('local', 's3').default('local'),
+  STORAGE_TEMP_DIR: Joi.string().trim().min(1).default('/tmp/terraleb-storage'),
+  STORAGE_MAX_OBJECT_BYTES: Joi.number()
+    .integer()
+    .min(5 * 1024 * 1024)
+    .max(5 * 1024 * 1024 * 1024)
+    .default(1024 * 1024 * 1024),
+  STORAGE_S3_ENDPOINT: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_REGION: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_FORCE_PATH_STYLE: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  STORAGE_S3_ACCESS_KEY_ID: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_SECRET_ACCESS_KEY: Joi.string().allow('').default(''),
+  STORAGE_S3_UPLOADS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_EXPORTS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_OFFLINE_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_AI_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_BACKUPS_BUCKET: Joi.string().trim().allow('').default(''),
+  STORAGE_S3_PREFIX: Joi.string().trim().allow('').max(200).default('terraleb'),
+  STORAGE_S3_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
+  STORAGE_S3_MAX_ATTEMPTS: Joi.number().integer().min(1).max(10).default(3),
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256').default('AES256'),
   PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
   PRIVACY_EXPORT_TTL_HOURS: Joi.number().integer().min(1).max(168).allow(null).default(null),
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
@@ -920,6 +1231,10 @@ const workloadWorkerEnvSchema = Joi.object({
   ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  RETAINED_GIS_RECORDS_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  FREE_TEXT_TREATMENT_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  BACKUP_AGEING_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
   LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
   LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
@@ -941,6 +1256,7 @@ const validateWorkloadWorkerEnv = (
   }
 
   if (value.NODE_ENV === 'production') {
+    validateProductionStorage(value, 'Workload worker environment validation failed');
     const privacyExportKey = Buffer.from(value.PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64, 'base64');
     if (
       privacyExportKey.length !== 32 ||
@@ -957,10 +1273,14 @@ const validateWorkloadWorkerEnv = (
         value.ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE,
         value.ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE,
         value.MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE,
+        value.RETAINED_GIS_RECORDS_APPROVAL_REFERENCE,
+        value.ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE,
+        value.FREE_TEXT_TREATMENT_APPROVAL_REFERENCE,
+        value.BACKUP_AGEING_APPROVAL_REFERENCE,
       ].some((reference: string) => !reference)
     ) {
       throw new Error(
-        'Workload worker environment validation failed: enabled deletion requires policy, retention, and masked-attribution approval references',
+        'Workload worker environment validation failed: enabled deletion requires every configured policy and retention approval reference',
       );
     }
     if (unsafeProductionSecret(value.DB_PASSWORD)) {

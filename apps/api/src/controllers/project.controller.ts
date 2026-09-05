@@ -67,32 +67,17 @@ const ensureCategoryExists = async (categoryId: string): Promise<void> => {
 const getCurrentOfflineMapManifest = async () => {
   const currentResult = await query(
     `SELECT id, version, zoom_level_min, zoom_level_max, downloaded_at,
-            last_updated_at, tile_count, size_bytes, tile_source, is_current
+            last_updated_at, tile_count, size_bytes, tile_source, is_current,
+            artifact_sha256, source_acquisition_start, source_acquisition_end,
+            source_scene_ids, source_terms_url, source_attribution,
+            source_resolution_meters, processing_manifest, published_at
      FROM lebanon_offline_map
      WHERE is_current = TRUE
      ORDER BY last_updated_at DESC
      LIMIT 1`,
   );
 
-  if (currentResult.rows.length > 0) {
-    return currentResult.rows[0];
-  }
-
-  const inserted = await query(
-    `INSERT INTO lebanon_offline_map (
-       version,
-       zoom_level_min,
-       zoom_level_max,
-       tile_source,
-       is_current
-     )
-     VALUES ($1, $2, $3, $4, TRUE)
-     RETURNING id, version, zoom_level_min, zoom_level_max, downloaded_at,
-               last_updated_at, tile_count, size_bytes, tile_source, is_current`,
-    ['lebanon-satellite-v1', 7, 18, 'esri_world_imagery'],
-  );
-
-  return inserted.rows[0];
+  return currentResult.rows[0] ?? null;
 };
 
 // Get all projects (filtered by user access)
@@ -517,7 +502,7 @@ const getProjectOfflinePackage = async (req, res) => {
     project.requires_photos ? 'photos-required' : 'photos-optional',
     project.min_photos ?? 0,
     project.max_photos ?? 0,
-    baseMap.version,
+    baseMap?.version ?? 'no-offline-basemap',
   ].join(':');
 
   res.json({

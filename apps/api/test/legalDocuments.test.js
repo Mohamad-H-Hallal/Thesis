@@ -24,6 +24,10 @@ describe('versioned legal documents and acceptance', () => {
       expect(document.version).toMatch(/^draft-/);
       expect(document.contentSha256).toMatch(/^[a-f0-9]{64}$/);
       expect(document.counselApproved).toBe(false);
+      expect(JSON.stringify(document)).not.toMatch(
+        /\[\s*(?:DECISION|OWNER|LEGAL)[^\]]*REQUIRED/i,
+      );
+      expect(document.title).not.toMatch(/legal review draft|approval pending/i);
     }
   });
 

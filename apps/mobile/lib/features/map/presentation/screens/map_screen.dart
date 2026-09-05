@@ -1246,14 +1246,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   DropdownButtonFormField<String>(
                     initialValue: project.id,
                     isExpanded: true,
+                    itemHeight: null,
                     decoration: const InputDecoration(labelText: 'Project'),
                     items: availableProjects
                         .map(
                           (item) => DropdownMenuItem(
                             value: item.id,
-                            child: Text(
-                              item.name,
-                              overflow: TextOverflow.ellipsis,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Text(item.name, softWrap: true),
                             ),
                           ),
                         )
@@ -1396,6 +1397,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       progressValue: _offlineDownloadProgressValue,
                       statusLabel: _offlineDownloadResultLabel,
                       pendingSyncCount: syncState.pendingCount,
+                      isCheckingAvailability: false,
+                      onCheckAvailability: () =>
+                          ref.invalidate(offlineMapPackageProvider),
                       onDownloadResources: offlinePackage == null
                           ? null
                           : () => _downloadOfflineResources(
@@ -2514,7 +2518,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_live_basemap_${effectiveBasemapStyle.name}',
                 ),
                 urlTemplate: liveBasemapUrl,
-                tileProvider: appNetworkTileProvider(),
+                fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(
+                  effectiveBasemapStyle,
+                ),
+                tileProvider: appNetworkTileProvider(
+                  apiClient: ref.read(apiClientProvider),
+                ),
                 tileDisplay: const TileDisplay.fadeIn(
                   duration: Duration(milliseconds: 180),
                   startOpacity: 0,
@@ -2537,7 +2546,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_label_overlay_${effectiveBasemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
-                tileProvider: appNetworkTileProvider(),
+                tileProvider: appNetworkTileProvider(
+                  apiClient: ref.read(apiClientProvider),
+                ),
                 tileDisplay: const TileDisplay.fadeIn(
                   duration: Duration(milliseconds: 220),
                   startOpacity: 0,
@@ -2796,7 +2807,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           effectiveBasemapStyle,
                         ),
-                        tileProvider: appNetworkTileProvider(),
+                        fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(
+                          effectiveBasemapStyle,
+                        ),
+                        tileProvider: appNetworkTileProvider(
+                          apiClient: ref.read(apiClientProvider),
+                        ),
                         tileDisplay: const TileDisplay.fadeIn(
                           duration: Duration(milliseconds: 180),
                           startOpacity: 0,
@@ -2819,7 +2835,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           'preview_label_overlay_${effectiveBasemapStyle.name}',
                         ),
                         urlTemplate: labelOverlayUrl,
-                        tileProvider: appNetworkTileProvider(),
+                        tileProvider: appNetworkTileProvider(
+                          apiClient: ref.read(apiClientProvider),
+                        ),
                         tileDisplay: const TileDisplay.fadeIn(
                           duration: Duration(milliseconds: 220),
                           startOpacity: 0,
@@ -7345,8 +7363,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             children: [
                               Text(
                                 project.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                softWrap: true,
                                 style: theme.textTheme.titleSmall?.copyWith(
                                   fontWeight: FontWeight.w700,
                                   height: 1.15,
@@ -8977,9 +8994,9 @@ class _OfflineMapSheet extends ConsumerWidget {
     final projectPackage = ref
         .watch(offlineProjectPackageProvider(project.id))
         .valueOrNull;
+    final offlinePackageState = ref.watch(offlineMapPackageProvider);
     final livePackage =
-        ref.watch(offlineMapPackageProvider).valueOrNull ??
-        initialOfflinePackage;
+        offlinePackageState.valueOrNull ?? initialOfflinePackage;
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
     return ValueListenableBuilder<_OfflineSheetUiState>(
@@ -9062,6 +9079,11 @@ class _OfflineMapSheet extends ConsumerWidget {
                           progressValue: uiState.progressValue,
                           statusLabel: uiState.statusLabel,
                           pendingSyncCount: syncState.pendingCount,
+                          isCheckingAvailability:
+                              livePackage == null &&
+                              offlinePackageState.isLoading,
+                          onCheckAvailability: () =>
+                              ref.invalidate(offlineMapPackageProvider),
                           onDownloadResources: livePackage == null
                               ? null
                               : onDownloadResources,
@@ -9129,6 +9151,8 @@ class _OfflineMapStatusCard extends StatelessWidget {
     required this.progressValue,
     required this.statusLabel,
     required this.pendingSyncCount,
+    required this.isCheckingAvailability,
+    required this.onCheckAvailability,
     required this.onDownloadResources,
     required this.onRefreshResources,
     required this.onCancelDownload,
@@ -9145,6 +9169,8 @@ class _OfflineMapStatusCard extends StatelessWidget {
   final double? progressValue;
   final String? statusLabel;
   final int pendingSyncCount;
+  final bool isCheckingAvailability;
+  final VoidCallback onCheckAvailability;
   final VoidCallback? onDownloadResources;
   final VoidCallback? onRefreshResources;
   final VoidCallback? onCancelDownload;
@@ -9153,7 +9179,43 @@ class _OfflineMapStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (package == null) {
-      return const Text('Offline map information is not available yet.');
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Offline map not published yet',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            const Text(
+              'Online maps and saved drafts still work. Download will become available automatically after TerraLeb publishes the verified Lebanon offline map.',
+              softWrap: true,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: isCheckingAvailability ? null : onCheckAvailability,
+                icon: isCheckingAvailability
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                label: Text(
+                  isCheckingAvailability ? 'Checking...' : 'Check again',
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     final downloadedAt = package!.downloadedAt;

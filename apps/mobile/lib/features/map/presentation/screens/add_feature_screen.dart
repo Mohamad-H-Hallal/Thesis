@@ -1621,6 +1621,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               DropdownButtonFormField<String>(
                 initialValue: _selectedProjectId,
                 isExpanded: true,
+                itemHeight: null,
                 decoration: const InputDecoration(
                   labelText: 'Assigned project',
                 ),
@@ -1628,9 +1629,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     .map(
                       (project) => DropdownMenuItem<String>(
                         value: project.id,
-                        child: Text(
-                          project.name,
-                          overflow: TextOverflow.ellipsis,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Text(project.name, softWrap: true),
                         ),
                       ),
                     )
@@ -1880,11 +1881,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
+              _ReviewProjectLabel(projectName: selectedProject.name),
+              const SizedBox(height: AppSpacing.xs),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  Chip(label: Text(selectedProject.name)),
                   Chip(label: Text(_geometryDisplayLabel())),
                   if (_geometryVertices.isNotEmpty)
                     Chip(label: Text(_geometrySummary())),
@@ -1972,6 +1974,39 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   String _formatDateTime(DateTime value) {
     return formatLebanonDateTime(value);
+  }
+}
+
+class _ReviewProjectLabel extends StatelessWidget {
+  const _ReviewProjectLabel({required this.projectName});
+
+  final String projectName;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: 'Project: $projectName',
+      container: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: SizedBox(
+            width: double.infinity,
+            child: Text(
+              projectName,
+              key: const Key('submission-review-project-name'),
+              softWrap: true,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2092,7 +2127,12 @@ class _GeometryCaptureMapCard extends ConsumerWidget {
                             urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                               basemapStyle,
                             ),
-                            tileProvider: appNetworkTileProvider(),
+                            fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(
+                              basemapStyle,
+                            ),
+                            tileProvider: appNetworkTileProvider(
+                              apiClient: ref.read(apiClientProvider),
+                            ),
                             userAgentPackageName: 'lb.gov.gis_collector',
                           ),
                         if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -2100,7 +2140,9 @@ class _GeometryCaptureMapCard extends ConsumerWidget {
                             labelOverlay != null)
                           TileLayer(
                             urlTemplate: labelOverlay,
-                            tileProvider: appNetworkTileProvider(),
+                            tileProvider: appNetworkTileProvider(
+                              apiClient: ref.read(apiClientProvider),
+                            ),
                             userAgentPackageName: 'lb.gov.gis_collector',
                           ),
                         if (polygonPoints.isNotEmpty)

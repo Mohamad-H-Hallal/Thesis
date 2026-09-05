@@ -88,7 +88,9 @@ const assertResetIsSafe = (config: SeedConfig): void => {
     return;
   }
 
-  const nodeEnv = String(process.env.NODE_ENV ?? 'development').trim().toLowerCase();
+  const nodeEnv = String(process.env.NODE_ENV ?? 'development')
+    .trim()
+    .toLowerCase();
   const allowDestructiveReset =
     String(process.env.ALLOW_DESTRUCTIVE_STAGING_RESET ?? '')
       .trim()
@@ -100,7 +102,7 @@ const assertResetIsSafe = (config: SeedConfig): void => {
 
   throw new Error(
     'Refusing to run STAGING_SEED_RESET=true outside an isolated test environment. ' +
-      'Use a dedicated staging database or set ALLOW_DESTRUCTIVE_STAGING_RESET=true intentionally.'
+      'Use a dedicated staging database or set ALLOW_DESTRUCTIVE_STAGING_RESET=true intentionally.',
   );
 };
 
@@ -146,7 +148,7 @@ const resetDatabase = async (client: PoolClient): Promise<void> => {
 const createUsers = async (
   client: PoolClient,
   config: SeedConfig,
-  seedTag: string
+  seedTag: string,
 ): Promise<SeedUser[]> => {
   const users: SeedUser[] = [];
   const passwordHash = await bcrypt.hash(config.defaultPassword, 10);
@@ -176,7 +178,7 @@ const createUsers = async (
          )
          VALUES ($1, $2, $3, $4, $5::user_role, TRUE, NOW() - ($6 || ' days')::interval, NOW() - ($7 || ' days')::interval)
          RETURNING id, role`,
-        [email, passwordHash, fullName, phone, rolePlan.role, randomInt(200), randomInt(30)]
+        [email, passwordHash, fullName, phone, rolePlan.role, randomInt(200), randomInt(30)],
       );
 
       users.push(result.rows[0]);
@@ -205,7 +207,7 @@ const createCategories = async (client: PoolClient, seedTag: string): Promise<st
        ON CONFLICT (name) DO UPDATE
        SET description = EXCLUDED.description
        RETURNING id`,
-      [name, `Staging category seeded in phase 11 (${baseName})`]
+      [name, `Staging category seeded in phase 11 (${baseName})`],
     );
     categoryIds.push(result.rows[0].id);
   }
@@ -217,7 +219,7 @@ const createProjects = async (
   client: PoolClient,
   config: SeedConfig,
   admins: SeedUser[],
-  categoryIds: string[]
+  categoryIds: string[],
 ): Promise<SeedProject[]> => {
   const statuses: Array<'active' | 'paused' | 'draft'> = [
     'active',
@@ -282,7 +284,7 @@ const createProjects = async (
         30 + randomInt(90),
         30 + randomInt(180),
         JSON.stringify(formSchema),
-      ]
+      ],
     );
 
     projects.push({
@@ -297,7 +299,7 @@ const createProjects = async (
 
 const promoteProjectsToTargetStatus = async (
   client: PoolClient,
-  projects: SeedProject[]
+  projects: SeedProject[],
 ): Promise<void> => {
   const transitionPaths: Record<SeedProject['targetStatus'], Array<'active' | 'paused'>> = {
     draft: [],
@@ -312,7 +314,7 @@ const promoteProjectsToTargetStatus = async (
         `UPDATE project
          SET status = $1::project_status
          WHERE id = $2`,
-        [nextStatus, project.id]
+        [nextStatus, project.id],
       );
     }
   }
@@ -322,7 +324,7 @@ const seedAssignments = async (
   client: PoolClient,
   config: SeedConfig,
   projects: SeedProject[],
-  contributors: SeedUser[]
+  contributors: SeedUser[],
 ): Promise<Map<string, string[]>> => {
   const projectContributorMap = new Map<string, string[]>();
 
@@ -339,13 +341,13 @@ const seedAssignments = async (
        )
        VALUES ($1, $2, 'admin', 'approved', CURRENT_DATE, CURRENT_DATE, $2)
        ON CONFLICT (project_id, user_id) DO NOTHING`,
-      [project.id, project.createdByUserId]
+      [project.id, project.createdByUserId],
     );
 
     const selectedContributors = sampleUnique(contributors, config.contributorsPerProject);
     projectContributorMap.set(
       project.id,
-      selectedContributors.map((contributor) => contributor.id)
+      selectedContributors.map((contributor) => contributor.id),
     );
 
     for (const contributor of selectedContributors) {
@@ -361,7 +363,7 @@ const seedAssignments = async (
          )
          VALUES ($1, $2, 'contributor', 'approved', CURRENT_DATE - ($3 * INTERVAL '1 day'), CURRENT_DATE - ($4 * INTERVAL '1 day'), $5)
          ON CONFLICT (project_id, user_id) DO NOTHING`,
-        [project.id, contributor.id, randomInt(45), randomInt(20), project.createdByUserId]
+        [project.id, contributor.id, randomInt(45), randomInt(20), project.createdByUserId],
       );
     }
   }
@@ -373,7 +375,7 @@ const seedFeatures = async (
   client: PoolClient,
   config: SeedConfig,
   projects: SeedProject[],
-  projectContributors: Map<string, string[]>
+  projectContributors: Map<string, string[]>,
 ): Promise<void> => {
   for (const project of projects) {
     const contributorIds = projectContributors.get(project.id);
@@ -424,14 +426,14 @@ const seedFeatures = async (
          NOW() - (random() * interval '45 days'),
          1 + floor(random() * 3)::int
       FROM src`,
-      [project.id, config.featuresPerProject, contributorIds]
+      [project.id, config.featuresPerProject, contributorIds],
     );
   }
 };
 
 const promoteSeededFeatures = async (
   client: PoolClient,
-  projects: SeedProject[]
+  projects: SeedProject[],
 ): Promise<void> => {
   for (const project of projects) {
     await client.query(
@@ -477,7 +479,7 @@ const promoteSeededFeatures = async (
          END
        FROM eligible
        WHERE sf.id = eligible.id`,
-      [project.id, project.createdByUserId]
+      [project.id, project.createdByUserId],
     );
   }
 };
@@ -485,7 +487,7 @@ const promoteSeededFeatures = async (
 const seedPhotos = async (
   client: PoolClient,
   config: SeedConfig,
-  projects: SeedProject[]
+  projects: SeedProject[],
 ): Promise<void> => {
   for (const project of projects) {
     await client.query(
@@ -517,7 +519,7 @@ const seedPhotos = async (
        FROM spatial_feature sf
        WHERE sf.project_id = $1::uuid
          AND random() < $2`,
-      [project.id, config.photoRatio]
+      [project.id, config.photoRatio],
     );
   }
 };
@@ -526,7 +528,7 @@ const seedExports = async (
   client: PoolClient,
   config: SeedConfig,
   projects: SeedProject[],
-  projectContributors: Map<string, string[]>
+  projectContributors: Map<string, string[]>,
 ): Promise<void> => {
   for (const project of projects) {
     const contributors = projectContributors.get(project.id);
@@ -539,9 +541,7 @@ const seedExports = async (
       const completed = i === 0;
       const status = completed ? 'completed' : i % 2 === 0 ? 'processing' : 'pending';
       const completedAt = completed ? `NOW() - (${randomInt(12)} * INTERVAL '1 day')` : 'NULL';
-      const filePath = completed
-        ? `/staging/exports/${project.id}_${i + 1}.zip`
-        : null;
+      const filePath = completed ? `/staging/exports/${project.id}_${i + 1}.zip` : null;
       const fileSize = completed ? 1000000 + randomInt(45000000) : null;
 
       await client.query(
@@ -588,7 +588,7 @@ const seedExports = async (
           completed ? 'available' : 'missing',
           fileSize,
           null,
-        ]
+        ],
       );
     }
   }
@@ -620,7 +620,7 @@ const seedNotifications = async (client: PoolClient): Promise<void> => {
        NOW() - (random() * interval '25 days'),
        CASE WHEN random() < 0.45 THEN NOW() - (random() * interval '20 days') ELSE NULL END
      FROM "user" u
-     WHERE random() < 0.8`
+     WHERE random() < 0.8`,
   );
 };
 
@@ -651,7 +651,7 @@ const seedAuditLogs = async (client: PoolClient): Promise<void> => {
        NOW() - (random() * interval '30 days')
      FROM spatial_feature sf
      WHERE random() < 0.08
-     LIMIT 5000`
+     LIMIT 5000`,
   );
 };
 
@@ -670,7 +670,7 @@ const seedOfflineMapVersion = async (client: PoolClient): Promise<void> => {
        tile_source,
        is_current
      )
-     VALUES ($1, 8, 18, NOW() - INTERVAL '21 days', NOW(), 92000, 2800000000, 'osm', TRUE)
+     VALUES ($1, 8, 18, NULL, NOW(), 92000, 2800000000, 'staging_placeholder_no_artifact', FALSE)
      ON CONFLICT (version)
      DO UPDATE SET
        zoom_level_min = EXCLUDED.zoom_level_min,
@@ -679,8 +679,8 @@ const seedOfflineMapVersion = async (client: PoolClient): Promise<void> => {
        tile_count = EXCLUDED.tile_count,
        size_bytes = EXCLUDED.size_bytes,
        tile_source = EXCLUDED.tile_source,
-       is_current = TRUE`,
-    [version]
+       is_current = FALSE`,
+    [version],
   );
 };
 
@@ -707,13 +707,11 @@ const seedSupportSettings = async (client: PoolClient): Promise<void> => {
            support_phone = EXCLUDED.support_phone,
            office_hours = EXCLUDED.office_hours,
            help_text = EXCLUDED.help_text,
-           updated_at = NOW()`
+           updated_at = NOW()`,
   );
 };
 
-const getSummaryCounts = async (
-  client: PoolClient
-): Promise<Record<string, number>> => {
+const getSummaryCounts = async (client: PoolClient): Promise<Record<string, number>> => {
   const statements = [
     ['users', 'SELECT COUNT(*)::int AS value FROM "user"'],
     ['projects', 'SELECT COUNT(*)::int AS value FROM project'],
@@ -736,7 +734,10 @@ const getSummaryCounts = async (
 const run = async (): Promise<void> => {
   const config = buildConfig();
   assertResetIsSafe(config);
-  const seedTag = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  const seedTag = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, '')
+    .slice(0, 14);
   const client = await pool.connect();
   const start = Date.now();
 

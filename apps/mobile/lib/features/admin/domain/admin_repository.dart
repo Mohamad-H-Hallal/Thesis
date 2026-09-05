@@ -148,5 +148,6 @@ abstract class AdminRepository {
     String? supportPhone,
     String? officeHours,
     String? helpText,
+    bool? hybridBasemapEnabled,
   });
 }

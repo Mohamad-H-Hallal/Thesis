@@ -93,6 +93,19 @@ function validatePositiveInteger(value, name) {
   return parsed;
 }
 
+function validateMapProviderUserAgent(value) {
+  const userAgent = requiredString(value, 'MAP_PROVIDER_USER_AGENT');
+  invariant(
+    userAgent.length >= 20 && userAgent.length <= 300,
+    'MAP_PROVIDER_USER_AGENT must be 20 to 300 characters.',
+  );
+  invariant(
+    /https:\/\//i.test(userAgent) && !/replace|example\.(com|net|org)/i.test(userAgent),
+    'MAP_PROVIDER_USER_AGENT must contain the real HTTPS operator site and no placeholder.',
+  );
+  return userAgent;
+}
+
 function validateGoogleServicesConfiguration(configuration, applicationId) {
   const expectedApplicationId = validateApplicationId(applicationId);
   invariant(
@@ -140,6 +153,9 @@ function validatePrebuildInputs(input) {
     androidVersionCode: validatePositiveInteger(
       input.ANDROID_VERSION_CODE,
       "ANDROID_VERSION_CODE",
+    ),
+    mapProviderUserAgent: validateMapProviderUserAgent(
+      input.MAP_PROVIDER_USER_AGENT,
     ),
   };
 }

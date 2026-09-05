@@ -30,7 +30,10 @@ COPY --from=build /app/infra/migrations /app/infra/migrations
 COPY apps/api/.env.example ./.env.example
 COPY apps/api/docker/entrypoint.sh /usr/local/bin/api-entrypoint.sh
 
-RUN rm -rf \
+RUN apk add --no-cache --upgrade \
+      'libcrypto3>=3.5.8-r0' \
+      'libssl3>=3.5.8-r0' \
+  && rm -rf \
       /usr/local/lib/node_modules/npm \
       /usr/local/lib/node_modules/corepack \
       /usr/local/bin/npm \
@@ -48,3 +51,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
 
 ENTRYPOINT ["api-entrypoint.sh"]
 CMD ["node", "dist/server.js"]
+
+FROM runtime AS backup
+USER root
+RUN apk add --no-cache 'postgresql16-client=16.15-r0'
+USER node
+CMD ["node", "dist/jobs/runDatabaseBackup.js"]

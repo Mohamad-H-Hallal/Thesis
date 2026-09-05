@@ -137,4 +137,39 @@ describe('migration integrity', () => {
       ),
     ).toEqual([]);
   });
+
+  test('accepts the documented pre-release 0063 checksum', () => {
+    const migrationsDir = path.resolve(__dirname, '../../../infra/migrations');
+    const filename = '0063_privacy_request_submitted_state.sql';
+    const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf8');
+    const source = [{ filename, checksum: calculateMigrationChecksum(sql) }];
+    const fullConfig = JSON.parse(
+      fs.readFileSync(path.join(migrationsDir, 'checksum-compatibility.json'), 'utf8'),
+    );
+    const config = {
+      version: 1,
+      migrations: fullConfig.migrations.filter((entry) => entry.filename === filename),
+    };
+    const compatibility = resolveMigrationChecksumCompatibility(config, source);
+
+    expect(source[0].checksum).toBe(
+      '9c3ac0a6993e5d75d57b22c715cf3c5b06ef20a82811165a2c89660746395a23',
+    );
+    expect(
+      findMigrationIntegrityIssues(
+        [
+          {
+            ...source[0],
+            compatibleChecksums: compatibility.get(filename),
+          },
+        ],
+        [
+          {
+            filename,
+            checksum: '77fb3e756b8ff04ef9f58ae584404c731132974b124f34038fd770f6988d3691',
+          },
+        ],
+      ),
+    ).toEqual([]);
+  });
 });

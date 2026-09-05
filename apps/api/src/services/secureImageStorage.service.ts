@@ -28,7 +28,10 @@ const releaseNormalizedJpeg = async (
 
   return {
     filename,
-    filePath: stored.localPath,
+    // Keep cleanup portable across local and object-storage drivers. Callers
+    // historically named this value filePath, so retain the field while
+    // returning the canonical storage reference.
+    filePath: stored.reference,
     storageReference: stored.reference,
     size: encodedImage.length,
   };

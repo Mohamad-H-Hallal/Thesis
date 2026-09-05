@@ -26,6 +26,7 @@ function validInputs(overrides = {}) {
     API_IMAGE_DIGEST: `sha256:${"b".repeat(64)}`,
     RC_API_BASE_URL: "https://staging.terraleb.org",
     ANDROID_APPLICATION_ID: "org.terraleb.mobile",
+    MAP_PROVIDER_USER_AGENT: "TerraLeb/1.0 (+https://terraleb.org/legal/important-notices)",
     ANDROID_VERSION_CODE: "1000001",
     ...overrides,
   };

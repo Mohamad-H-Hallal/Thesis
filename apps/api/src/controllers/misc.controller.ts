@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+import { pipeline } from 'node:stream/promises';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
@@ -26,6 +27,8 @@ import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.
 import { revokeAllUserSessions } from '../services/authSession.service';
 import { publishRealtimeChanges } from '../realtime/realtimeEvents';
 import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+import { invalidateMapProviderConfigurationCache } from '../services/arcgisMapProvider.service';
+import { storageAdapter } from '../services/storageAdapter.service';
 
 const categoryRealtimeInputs = (
   categoryId: string,
@@ -109,13 +112,15 @@ const getSupportSettingsRow = async () => {
       support_phone TEXT,
       office_hours TEXT,
       help_text TEXT,
+      hybrid_basemap_enabled BOOLEAN NOT NULL DEFAULT TRUE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_by_user_id UUID REFERENCES "user"(id) ON DELETE SET NULL
     )
   `);
 
   const result = await query(
-    `SELECT id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
+    `SELECT id, support_email, support_phone, office_hours, help_text,
+            hybrid_basemap_enabled, updated_at, updated_by_user_id
      FROM app_support_settings
      WHERE id = 1`,
   );
@@ -128,41 +133,28 @@ const getSupportSettingsRow = async () => {
     `INSERT INTO app_support_settings (id)
      VALUES (1)
      ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-     RETURNING id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id`,
+     RETURNING id, support_email, support_phone, office_hours, help_text,
+               hybrid_basemap_enabled, updated_at, updated_by_user_id`,
   );
 
   return inserted.rows[0];
 };
 
-const ensureCurrentOfflineMapRow = async () => {
+const getCurrentOfflineMapRow = async () => {
   const currentResult = await query(
     `SELECT id, version, zoom_level_min, zoom_level_max, downloaded_at,
-            last_updated_at, tile_count, size_bytes, tile_source, is_current
+            last_updated_at, tile_count, size_bytes, tile_source, is_current,
+            artifact_reference, artifact_sha256, artifact_content_type, source_acquisition_start,
+            source_acquisition_end, source_scene_ids, source_terms_url,
+            source_attribution, source_resolution_meters, processing_manifest,
+            published_at
      FROM lebanon_offline_map
      WHERE is_current = TRUE
      ORDER BY last_updated_at DESC
      LIMIT 1`,
   );
 
-  if (currentResult.rows.length > 0) {
-    return currentResult.rows[0];
-  }
-
-  const inserted = await query(
-    `INSERT INTO lebanon_offline_map (
-       version,
-       zoom_level_min,
-       zoom_level_max,
-       tile_source,
-       is_current
-     )
-     VALUES ($1, $2, $3, $4, TRUE)
-     RETURNING id, version, zoom_level_min, zoom_level_max, downloaded_at,
-               last_updated_at, tile_count, size_bytes, tile_source, is_current`,
-    ['lebanon-satellite-v1', 7, 18, 'esri_world_imagery'],
-  );
-
-  return inserted.rows[0];
+  return currentResult.rows[0] ?? null;
 };
 
 const getUserForAdminMutation = async (userId: string) => {
@@ -350,10 +342,9 @@ const categoryController = {
         params,
       );
       if (updated.rows.length === 0 && expected_version !== undefined) {
-        const latest = await client.query(
-          'SELECT version FROM project_category WHERE id = $1',
-          [categoryId],
-        );
+        const latest = await client.query('SELECT version FROM project_category WHERE id = $1', [
+          categoryId,
+        ]);
         if (latest.rows[0]) {
           throw new AppError('Category changed after this form was opened.', 409, {
             code: 'ENTITY_VERSION_CONFLICT',
@@ -462,28 +453,33 @@ const settingsController = {
       );
     }
 
-    const { support_email, support_phone, office_hours, help_text } = req.body;
+    const { support_email, support_phone, office_hours, help_text, hybrid_basemap_enabled } =
+      req.body;
     await getSupportSettingsRow();
 
     const result = await transaction(async (client) => {
       const updated = await client.query(
         `INSERT INTO app_support_settings (
-         id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
+         id, support_email, support_phone, office_hours, help_text,
+         hybrid_basemap_enabled, updated_at, updated_by_user_id
        )
-       VALUES (1, $1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
+       VALUES (1, $1, $2, $3, $4, COALESCE($5, TRUE), CURRENT_TIMESTAMP, $6)
        ON CONFLICT (id) DO UPDATE
          SET support_email = EXCLUDED.support_email,
              support_phone = EXCLUDED.support_phone,
              office_hours = EXCLUDED.office_hours,
              help_text = EXCLUDED.help_text,
+             hybrid_basemap_enabled = COALESCE($5, app_support_settings.hybrid_basemap_enabled),
              updated_at = CURRENT_TIMESTAMP,
              updated_by_user_id = EXCLUDED.updated_by_user_id
-       RETURNING id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id`,
+       RETURNING id, support_email, support_phone, office_hours, help_text,
+                 hybrid_basemap_enabled, updated_at, updated_by_user_id`,
         [
           support_email ?? null,
           support_phone ?? null,
           office_hours ?? null,
           help_text ?? null,
+          hybrid_basemap_enabled ?? null,
           req.user?.id ?? null,
         ],
       );
@@ -503,6 +499,7 @@ const settingsController = {
       );
       return updated;
     });
+    invalidateMapProviderConfigurationCache();
 
     res.json({
       success: true,
@@ -514,12 +511,113 @@ const settingsController = {
 
 const offlineMapController = {
   getCurrent: async (_req, res) => {
-    const row = await ensureCurrentOfflineMapRow();
+    const row = await getCurrentOfflineMapRow();
+
+    if (!row) {
+      throw new AppError('No offline map package is currently published.', 404, {
+        code: 'OFFLINE_MAP_NOT_PUBLISHED',
+        disposition: 'blocked',
+        retryable: false,
+      });
+    }
 
     res.json({
       success: true,
-      data: row,
+      data: {
+        id: row.id,
+        version: row.version,
+        zoom_level_min: row.zoom_level_min,
+        zoom_level_max: row.zoom_level_max,
+        downloaded_at: row.downloaded_at,
+        last_updated_at: row.last_updated_at,
+        tile_count: row.tile_count,
+        size_bytes: row.size_bytes,
+        tile_source: row.tile_source,
+        is_current: row.is_current,
+        artifact_sha256: row.artifact_sha256,
+        artifact_content_type: row.artifact_content_type,
+        source_acquisition_start: row.source_acquisition_start,
+        source_acquisition_end: row.source_acquisition_end,
+        source_scene_ids: row.source_scene_ids,
+        source_terms_url: row.source_terms_url,
+        source_attribution: row.source_attribution,
+        source_resolution_meters: row.source_resolution_meters,
+        processing_manifest: row.processing_manifest,
+        published_at: row.published_at,
+        download_path: '/offline-map/current/download',
+      },
     });
+  },
+
+  downloadCurrent: async (req, res) => {
+    const row = await getCurrentOfflineMapRow();
+    if (!row?.artifact_reference || !row.artifact_sha256) {
+      throw new AppError('No offline map package is currently published.', 404, {
+        code: 'OFFLINE_MAP_NOT_PUBLISHED',
+        disposition: 'blocked',
+        retryable: false,
+      });
+    }
+    const info = await storageAdapter.info(row.artifact_reference, ['offline']);
+    if (info.sha256 !== row.artifact_sha256 || info.size !== Number(row.size_bytes)) {
+      throw new AppError('The offline map package failed integrity validation.', 503, {
+        code: 'OFFLINE_MAP_INTEGRITY_FAILED',
+        disposition: 'blocked',
+        retryable: true,
+      });
+    }
+
+    const etag = `"${info.sha256}"`;
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('ETag', etag);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (req.headers['if-none-match'] === etag && !req.headers.range) {
+      res.status(304).end();
+      return;
+    }
+
+    let start = 0;
+    let end = info.size - 1;
+    const rawRange = req.headers.range;
+    if (rawRange) {
+      const match = /^bytes=(\d+)-(\d*)$/.exec(rawRange.trim());
+      if (!match) {
+        res.setHeader('Content-Range', `bytes */${info.size}`);
+        res.status(416).end();
+        return;
+      }
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : info.size - 1;
+      if (
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start < 0 ||
+        end < start ||
+        end >= info.size
+      ) {
+        res.setHeader('Content-Range', `bytes */${info.size}`);
+        res.status(416).end();
+        return;
+      }
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${info.size}`);
+    }
+
+    const safeVersion = String(row.version)
+      .replace(/[^A-Za-z0-9._-]/g, '_')
+      .slice(0, 80);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', String(end - start + 1));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="terraleb-offline-${safeVersion}.zip"`,
+    );
+    const stream =
+      start === 0 && end === info.size - 1
+        ? await storageAdapter.openReadStream(row.artifact_reference, ['offline'])
+        : await storageAdapter.openReadRange(row.artifact_reference, { start, end }, ['offline']);
+    await pipeline(stream, res);
   },
 };
 
@@ -1199,7 +1297,8 @@ const userController = {
         await publishRealtimeChanges(
           userRealtimeInputs({
             userId,
-            action: is_active === false ? 'deactivated' : is_active === true ? 'reactivated' : 'updated',
+            action:
+              is_active === false ? 'deactivated' : is_active === true ? 'reactivated' : 'updated',
             originSessionId: req.authSessionId,
           }),
           client,

@@ -1,5 +1,9 @@
 # TerraLeb revised owner policy, hosting cost and deployment plan
 
+> **Superseded for execution on 2026-08-25:** use
+> [`TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md`](TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md).
+> This file remains as historical decision context.
+
 > **2026-08-19 regional-hosting and zero-purchase-map decision:** the later
 > [`TERRALEB_MAP_AND_REGIONAL_HOSTING_DECISION.md`](TERRALEB_MAP_AND_REGIONAL_HOSTING_DECISION.md)
 > clarifies the app's actual Street/Hybrid sources, selects a no-purchase map

@@ -38,6 +38,7 @@ import '../../features/map/domain/current_location_service.dart';
 import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/map/domain/map_geometry.dart';
+import '../../features/map/domain/lebanon_map.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
 import '../../features/notifications/data/push_notification_service.dart';
@@ -170,7 +171,10 @@ final mapRepositoryProvider = Provider<ApiMapRepository>((ref) {
 final offlineTileCacheManagerProvider = Provider<OfflineTileCacheManager>((
   ref,
 ) {
-  return OfflineTileCacheManager(localStore: ref.watch(localStoreProvider));
+  return OfflineTileCacheManager(
+    localStore: ref.watch(localStoreProvider),
+    apiClient: ref.watch(apiClientProvider),
+  );
 });
 
 final offlineProjectDownloadServiceProvider =
@@ -1036,6 +1040,18 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
 
   return localPackage;
 });
+
+final mapProviderConfigurationProvider =
+    FutureProvider<MapProviderConfiguration>((ref) async {
+      watchRealtimeScope(ref, const RealtimeScope('settings', 'support'));
+      if (!AppEnv.hybridMapUsesApiProxy) {
+        return const MapProviderConfiguration(
+          hybridEnabled: true,
+          hybridAttribution: '© Esri and imagery providers',
+        );
+      }
+      return ref.read(mapRepositoryProvider).fetchMapProviderConfiguration();
+    });
 
 final offlineProjectPackageProvider =
     FutureProvider.family<OfflineProjectPackage?, String>((
@@ -1943,7 +1959,16 @@ OfflineMapPackage? _mergeOfflineMapPackage({
       lastUpdatedAt: remote.lastUpdatedAt,
       tileCount: 0,
       sizeBytes: 0,
+      artifactSizeBytes: remote.artifactSizeBytes,
       tileSource: remote.tileSource,
+      artifactSha256: remote.artifactSha256,
+      artifactContentType: remote.artifactContentType,
+      downloadPath: remote.downloadPath,
+      sourceAttribution: remote.sourceAttribution,
+      sourceAcquisitionStart: remote.sourceAcquisitionStart,
+      sourceAcquisitionEnd: remote.sourceAcquisitionEnd,
+      sourceResolutionMeters: remote.sourceResolutionMeters,
+      sourceTermsUrl: remote.sourceTermsUrl,
       isCurrent: remote.isCurrent,
     );
   }
@@ -1956,7 +1981,16 @@ OfflineMapPackage? _mergeOfflineMapPackage({
     lastUpdatedAt: remote.lastUpdatedAt,
     tileCount: local.tileCount,
     sizeBytes: local.sizeBytes,
+    artifactSizeBytes: remote.artifactSizeBytes,
     tileSource: remote.tileSource,
+    artifactSha256: remote.artifactSha256,
+    artifactContentType: remote.artifactContentType,
+    downloadPath: remote.downloadPath,
+    sourceAttribution: remote.sourceAttribution,
+    sourceAcquisitionStart: remote.sourceAcquisitionStart,
+    sourceAcquisitionEnd: remote.sourceAcquisitionEnd,
+    sourceResolutionMeters: remote.sourceResolutionMeters,
+    sourceTermsUrl: remote.sourceTermsUrl,
     isCurrent: remote.isCurrent,
   );
 }

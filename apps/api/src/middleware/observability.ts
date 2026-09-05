@@ -5,6 +5,7 @@ import { query } from '../config/database';
 import { getRateLimitBackendReadiness } from '../services/sharedRateLimit.service';
 import { getRealtimeMetricsSnapshot } from '../realtime/realtimeMetrics';
 import { normalizeRequestPath } from './requestContext';
+import { getMapProviderMetricsSnapshot } from '../services/mapProviderMetrics';
 const logger = require('../utils/logger');
 
 interface RouteMetric {
@@ -58,7 +59,10 @@ const collectRequestMetrics = (req: Request, res: Response, next: NextFunction):
     const method = req.method.toUpperCase();
     let requestPath = normalizeRequestPath(req.originalUrl);
     let key = routeMetricKey(method, requestPath, statusClass, statusCode);
-    if (!requestMetrics.routeCounts[key] && Object.keys(requestMetrics.routeCounts).length >= maxRouteSeries) {
+    if (
+      !requestMetrics.routeCounts[key] &&
+      Object.keys(requestMetrics.routeCounts).length >= maxRouteSeries
+    ) {
       requestPath = '/other';
       key = routeMetricKey(method, requestPath, statusClass, statusCode);
     }
@@ -127,11 +131,7 @@ const assertMetricsConfig = (env: {
 const escapeLabelValue = (value: string): string =>
   value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
 
-const metricLine = (
-  name: string,
-  value: number,
-  labels: Record<string, string> = {},
-): string => {
+const metricLine = (name: string, value: number, labels: Record<string, string> = {}): string => {
   const entries = Object.entries(labels);
   const renderedLabels =
     entries.length === 0
@@ -217,6 +217,7 @@ const renderPrometheusMetrics = async ({
   const lines: string[] = [];
   const memory = process.memoryUsage();
   const realtime = getRealtimeMetricsSnapshot();
+  const mapProvider = getMapProviderMetricsSnapshot();
   const completedRequests = Object.values(requestMetrics.statusCounts).reduce(
     (total, count) => total + count,
     0,
@@ -249,9 +250,7 @@ const renderPrometheusMetrics = async ({
     'Realtime WebSocket connection attempts.',
     'counter',
   );
-  lines.push(
-    metricLine('gis_api_realtime_connection_attempts_total', realtime.connectionAttempts),
-  );
+  lines.push(metricLine('gis_api_realtime_connection_attempts_total', realtime.connectionAttempts));
   appendMetricHeader(
     lines,
     'gis_api_realtime_reconnects_total',
@@ -273,10 +272,7 @@ const renderPrometheusMetrics = async ({
     'counter',
   );
   lines.push(
-    metricLine(
-      'gis_api_realtime_authentication_failures_total',
-      realtime.authenticationFailures,
-    ),
+    metricLine('gis_api_realtime_authentication_failures_total', realtime.authenticationFailures),
   );
   appendMetricHeader(
     lines,
@@ -328,10 +324,7 @@ const renderPrometheusMetrics = async ({
     'counter',
   );
   lines.push(
-    metricLine(
-      'gis_api_realtime_revision_reconciliations_total',
-      realtime.revisionReconciliations,
-    ),
+    metricLine('gis_api_realtime_revision_reconciliations_total', realtime.revisionReconciliations),
   );
   appendMetricHeader(
     lines,
@@ -340,6 +333,58 @@ const renderPrometheusMetrics = async ({
     'gauge',
   );
   lines.push(metricLine('gis_api_realtime_listener_ready', realtime.listenerReady ? 1 : 0));
+  appendMetricHeader(
+    lines,
+    'gis_api_map_provider_requests_total',
+    'Online map-provider requests by bounded layer and outcome.',
+    'counter',
+  );
+  for (const [key, count] of Object.entries(mapProvider.counters)) {
+    const [layer, outcome] = key.split(':');
+    lines.push(
+      metricLine('gis_api_map_provider_requests_total', count, {
+        layer: layer ?? 'unknown',
+        outcome: outcome ?? 'unknown',
+      }),
+    );
+  }
+  appendMetricHeader(
+    lines,
+    'gis_api_map_provider_request_duration_milliseconds',
+    'Online map-provider request duration by bounded layer.',
+    'histogram',
+  );
+  for (const [layer, counts] of Object.entries(mapProvider.latencyCounts)) {
+    mapProvider.latencyBuckets.forEach((bound, index) => {
+      lines.push(
+        metricLine(
+          'gis_api_map_provider_request_duration_milliseconds_bucket',
+          counts[index] ?? 0,
+          {
+            layer,
+            le: String(bound),
+          },
+        ),
+      );
+    });
+    lines.push(
+      metricLine(
+        'gis_api_map_provider_request_duration_milliseconds_bucket',
+        mapProvider.requestCounts[layer] ?? 0,
+        { layer, le: '+Inf' },
+      ),
+      metricLine(
+        'gis_api_map_provider_request_duration_milliseconds_sum',
+        mapProvider.latencySums[layer] ?? 0,
+        { layer },
+      ),
+      metricLine(
+        'gis_api_map_provider_request_duration_milliseconds_count',
+        mapProvider.requestCounts[layer] ?? 0,
+        { layer },
+      ),
+    );
+  }
   appendMetricHeader(
     lines,
     'gis_api_realtime_payload_bytes_total',
@@ -354,9 +399,11 @@ const renderPrometheusMetrics = async ({
     'histogram',
   );
   realtime.payloadBucketBounds.forEach((bound, index) => {
-    lines.push(metricLine('gis_api_realtime_payload_bytes_bucket', realtime.payloadBucketCounts[index], {
-      le: String(bound),
-    }));
+    lines.push(
+      metricLine('gis_api_realtime_payload_bytes_bucket', realtime.payloadBucketCounts[index], {
+        le: String(bound),
+      }),
+    );
   });
   lines.push(
     metricLine('gis_api_realtime_payload_bytes_bucket', realtime.payloadCount, { le: '+Inf' }),
@@ -522,24 +569,16 @@ const renderPrometheusMetrics = async ({
   return `${lines.join('\n')}\n`;
 };
 
-const createMetricsHandler = ({
-  uploadDir,
-  exportDir,
-}: {
-  uploadDir: string;
-  exportDir: string;
-}) =>
+const createMetricsHandler =
+  ({ uploadDir, exportDir }: { uploadDir: string; exportDir: string }) =>
   async (req: Request, res: Response): Promise<void> => {
     try {
       const metrics = await renderPrometheusMetrics({ uploadDir, exportDir });
-      res
-        .status(200)
-        .type('text/plain; version=0.0.4; charset=utf-8')
-        .send(metrics);
-  } catch (error) {
-    logger.error('Metrics rendering failed', {
-      requestId: req.requestId,
-      errorName: error instanceof Error ? error.name : 'UnknownMetricsRenderingError',
+      res.status(200).type('text/plain; version=0.0.4; charset=utf-8').send(metrics);
+    } catch (error) {
+      logger.error('Metrics rendering failed', {
+        requestId: req.requestId,
+        errorName: error instanceof Error ? error.name : 'UnknownMetricsRenderingError',
       });
       res.status(503).json({
         success: false,

@@ -6,6 +6,16 @@ import '../../../core/config/app_env.dart';
 
 enum LebanonBasemapStyle { street, satellite }
 
+class MapProviderConfiguration {
+  const MapProviderConfiguration({
+    required this.hybridEnabled,
+    required this.hybridAttribution,
+  });
+
+  final bool hybridEnabled;
+  final String hybridAttribution;
+}
+
 class LebanonMapConfig {
   const LebanonMapConfig._();
 
@@ -68,6 +78,9 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.street:
         return AppEnv.streetTileUrlTemplate;
       case LebanonBasemapStyle.satellite:
+        if (AppEnv.hybridMapUsesApiProxy) {
+          return '${AppEnv.mapApiBaseUrl}/tiles/imagery/{z}/{y}/{x}';
+        }
         return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
     }
   }
@@ -77,6 +90,9 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.street:
         return null;
       case LebanonBasemapStyle.satellite:
+        if (AppEnv.hybridMapUsesApiProxy) {
+          return '${AppEnv.mapApiBaseUrl}/tiles/reference/{z}/{y}/{x}';
+        }
         return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
     }
   }
@@ -104,7 +120,7 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.street:
         return '© OpenStreetMap contributors';
       case LebanonBasemapStyle.satellite:
-        return 'Source: Esri and imagery providers';
+        return '© Esri and imagery providers';
     }
   }
 
@@ -116,4 +132,9 @@ class LebanonMapConfig {
         return '© Esri & providers';
     }
   }
+
+  static String? fallbackUrlTemplate(LebanonBasemapStyle style) =>
+      style == LebanonBasemapStyle.satellite ? streetTileUrlTemplate : null;
+
+  static String get streetTileUrlTemplate => AppEnv.streetTileUrlTemplate;
 }

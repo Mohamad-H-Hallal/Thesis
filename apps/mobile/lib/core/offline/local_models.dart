@@ -64,7 +64,16 @@ class OfflineMapPackage {
     required this.lastUpdatedAt,
     this.tileCount,
     this.sizeBytes,
+    this.artifactSizeBytes,
     this.tileSource,
+    this.artifactSha256,
+    this.artifactContentType,
+    this.downloadPath,
+    this.sourceAttribution,
+    this.sourceAcquisitionStart,
+    this.sourceAcquisitionEnd,
+    this.sourceResolutionMeters,
+    this.sourceTermsUrl,
     required this.isCurrent,
   });
 
@@ -76,8 +85,24 @@ class OfflineMapPackage {
   final DateTime lastUpdatedAt;
   final int? tileCount;
   final int? sizeBytes;
+  final int? artifactSizeBytes;
   final String? tileSource;
+  final String? artifactSha256;
+  final String? artifactContentType;
+  final String? downloadPath;
+  final String? sourceAttribution;
+  final DateTime? sourceAcquisitionStart;
+  final DateTime? sourceAcquisitionEnd;
+  final double? sourceResolutionMeters;
+  final String? sourceTermsUrl;
   final bool isCurrent;
+
+  bool get isProviderNeutralPackageReady =>
+      isCurrent &&
+      tileSource == 'copernicus_sentinel2_osm_labels' &&
+      artifactSha256?.length == 64 &&
+      artifactContentType == 'application/zip' &&
+      downloadPath?.isNotEmpty == true;
 
   OfflineMapPackage copyWith({
     String? ownerUserId,
@@ -88,7 +113,16 @@ class OfflineMapPackage {
     DateTime? lastUpdatedAt,
     int? tileCount,
     int? sizeBytes,
+    int? artifactSizeBytes,
     String? tileSource,
+    String? artifactSha256,
+    String? artifactContentType,
+    String? downloadPath,
+    String? sourceAttribution,
+    DateTime? sourceAcquisitionStart,
+    DateTime? sourceAcquisitionEnd,
+    double? sourceResolutionMeters,
+    String? sourceTermsUrl,
     bool? isCurrent,
   }) {
     return OfflineMapPackage(
@@ -100,7 +134,18 @@ class OfflineMapPackage {
       lastUpdatedAt: lastUpdatedAt ?? this.lastUpdatedAt,
       tileCount: tileCount ?? this.tileCount,
       sizeBytes: sizeBytes ?? this.sizeBytes,
+      artifactSizeBytes: artifactSizeBytes ?? this.artifactSizeBytes,
       tileSource: tileSource ?? this.tileSource,
+      artifactSha256: artifactSha256 ?? this.artifactSha256,
+      artifactContentType: artifactContentType ?? this.artifactContentType,
+      downloadPath: downloadPath ?? this.downloadPath,
+      sourceAttribution: sourceAttribution ?? this.sourceAttribution,
+      sourceAcquisitionStart:
+          sourceAcquisitionStart ?? this.sourceAcquisitionStart,
+      sourceAcquisitionEnd: sourceAcquisitionEnd ?? this.sourceAcquisitionEnd,
+      sourceResolutionMeters:
+          sourceResolutionMeters ?? this.sourceResolutionMeters,
+      sourceTermsUrl: sourceTermsUrl ?? this.sourceTermsUrl,
       isCurrent: isCurrent ?? this.isCurrent,
     );
   }
@@ -115,7 +160,16 @@ class OfflineMapPackage {
       'last_updated_at': lastUpdatedAt.toIso8601String(),
       'tile_count': tileCount,
       'size_bytes': sizeBytes,
+      'artifact_size_bytes': artifactSizeBytes,
       'tile_source': tileSource,
+      'artifact_sha256': artifactSha256,
+      'artifact_content_type': artifactContentType,
+      'download_path': downloadPath,
+      'source_attribution': sourceAttribution,
+      'source_acquisition_start': sourceAcquisitionStart?.toIso8601String(),
+      'source_acquisition_end': sourceAcquisitionEnd?.toIso8601String(),
+      'source_resolution_meters': sourceResolutionMeters,
+      'source_terms_url': sourceTermsUrl,
       'is_current': isCurrent ? 1 : 0,
     };
   }
@@ -132,7 +186,21 @@ class OfflineMapPackage {
       lastUpdatedAt: DateTime.parse(row['last_updated_at'] as String),
       tileCount: row['tile_count'] as int?,
       sizeBytes: row['size_bytes'] as int?,
+      artifactSizeBytes: row['artifact_size_bytes'] as int?,
       tileSource: row['tile_source'] as String?,
+      artifactSha256: row['artifact_sha256'] as String?,
+      artifactContentType: row['artifact_content_type'] as String?,
+      downloadPath: row['download_path'] as String?,
+      sourceAttribution: row['source_attribution'] as String?,
+      sourceAcquisitionStart: row['source_acquisition_start'] == null
+          ? null
+          : DateTime.tryParse(row['source_acquisition_start'] as String),
+      sourceAcquisitionEnd: row['source_acquisition_end'] == null
+          ? null
+          : DateTime.tryParse(row['source_acquisition_end'] as String),
+      sourceResolutionMeters: (row['source_resolution_meters'] as num?)
+          ?.toDouble(),
+      sourceTermsUrl: row['source_terms_url'] as String?,
       isCurrent: (row['is_current'] as int) == 1,
     );
   }

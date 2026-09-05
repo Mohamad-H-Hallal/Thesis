@@ -1,59 +1,108 @@
 {
-  "schemaVersion": 1,
-  "reviewedAt": "2026-08-16",
+  "schemaVersion": 2,
+  "registerVersion": "2.0.0",
+  "reviewedAt": "2026-09-05T00:00:00.000Z",
   "productionAuthorized": false,
+  "releaseScope": {
+    "releaseName": "android-web-v1",
+    "platforms": ["android", "web"],
+    "territories": ["LB"],
+    "requiredLocales": ["ar", "en"],
+    "excludedCapabilities": ["ios_public_release", "esri_offline_redistribution"]
+  },
+  "productionAuthorization": {
+    "status": "blocked",
+    "responsibleOwner": "TerraLeb release owner",
+    "reviewedAt": null,
+    "evidenceReference": null,
+    "applicableVersion": "android-web-v1"
+  },
   "counselApproval": {
-    "approved": false,
-    "approvalReference": null
+    "status": "blocked",
+    "responsibleOwner": "Qualified Lebanese counsel",
+    "reviewedAt": null,
+    "evidenceReference": null,
+    "applicableVersion": "android-web-v1"
   },
   "decisions": {
-    "legalOperatorController": false,
-    "controllerProcessorRoles": false,
-    "targetTerritoriesAndDistribution": false,
-    "minimumAgeAndMinors": false,
-    "privacyContact": false,
-    "hostingRegionsAndSubprocessors": false,
-    "retentionMatrix": false,
-    "retainedInstitutionalRecordBasis": false,
-    "maskedContributorDisplayPolicy": false,
-    "photosPreciseLocationFreeTextTreatment": false,
-    "backupAgeingPeriod": false,
-    "contributorAndDeletionNoticeWording": false,
-    "mapAndOfflineRights": false,
-    "gisOwnershipAndPublication": false,
-    "aiTrainingAndPublication": false,
-    "governingLawAndDisputes": false,
-    "requiredLanguages": false,
-    "lebanonLaw81Formalities": false
+    "legalOperatorController": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "controllerProcessorRoles": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1", "approvalScope": "Owner-approved operating model only; actual institution/vendor role agreements remain gated separately." },
+    "targetTerritoriesAndDistribution": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "minimumAgeAndMinors": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "privacyContact": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "hostingRegionsAndSubprocessors": { "status": "blocked", "responsibleOwner": "TerraLeb operations owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "retentionMatrix": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/RETENTION_MATRIX.md@sha256:4a3dbd7c19f2a032d5ec23538867297bc90eb942341c3e9502a683b3579eb203", "applicableVersion": "android-web-v1", "approvalScope": "Owner operational schedule; counsel and implemented cleanup evidence remain separate gates." },
+    "retainedInstitutionalRecordBasis": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1", "approvalScope": "Owner-selected project-integrity purpose; final lawful-basis conclusion remains counsel-gated." },
+    "maskedContributorDisplayPolicy": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "photosPreciseLocationFreeTextTreatment": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "backupAgeingPeriod": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "contributorAndDeletionNoticeWording": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1", "approvalScope": "Owner wording baseline; final public clauses remain counsel-gated." },
+    "mapAndOfflineRights": { "status": "blocked", "responsibleOwner": "TerraLeb GIS and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "gisOwnershipAndPublication": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1", "approvalScope": "Owner contribution/publication policy; actual source and institution rights remain separately gated." },
+    "aiTrainingAndPublication": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1" },
+    "governingLawAndDisputes": { "status": "blocked", "responsibleOwner": "Qualified Lebanese counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "requiredLanguages": { "status": "approved", "responsibleOwner": "TerraLeb product owner", "reviewedAt": "2026-09-05T00:00:00.000Z", "evidenceReference": "repo:docs/legal/TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md@sha256:0804aa982a4bde3e5b8c6c7b9dedc7484b75c5d39b01f35bcd2f6d4bf62d6546", "applicableVersion": "android-web-v1", "approvalScope": "Arabic and English selected; final translation and counsel review remain required before document approval." },
+    "lebanonLaw81Formalities": { "status": "blocked", "responsibleOwner": "Qualified Lebanese counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" }
   },
   "storeDisclosures": {
-    "appleApproved": false,
-    "googlePlayApproved": false
+    "appleApproved": {
+      "status": "not_in_release_scope",
+      "responsibleOwner": "TerraLeb release owner",
+      "reviewedAt": "2026-08-26T00:00:00.000Z",
+      "evidenceReference": "repo:docs/legal/TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md@sha256:d5892ae028df35dc2c82aa2da033e143b194ea8f6c30243cdebf9af1736e5aa2",
+      "applicableVersion": "android-web-v1",
+      "rationale": "The initial public release includes Android and web; iOS source remains buildable but no iOS store release is authorized."
+    },
+    "googlePlayApproved": { "status": "blocked", "responsibleOwner": "TerraLeb release owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" }
   },
   "platformReadiness": {
-    "accountDeletionVerified": false,
-    "iosPurposeStringsVerified": false,
-    "privacyManifestInventoryVerified": false,
-    "productionIdentifiersVerified": false,
-    "privacyRightsFulfillmentVerified": false,
-    "retentionAutomationVerified": false,
-    "notificationPrivacyVerified": false,
-    "ugcModerationVerified": false,
-    "accessibilityVerified": false,
-    "softwareLicenseAndSbomVerified": false,
-    "importProvenanceEnforcementVerified": false
+    "accountDeletionVerified": { "status": "blocked", "responsibleOwner": "TerraLeb engineering and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "iosPurposeStringsVerified": {
+      "status": "not_in_release_scope",
+      "responsibleOwner": "TerraLeb release owner",
+      "reviewedAt": "2026-08-26T00:00:00.000Z",
+      "evidenceReference": "repo:apps/mobile/ios/Runner/Info.plist@sha256:9d57745d59e38c9bad3d549c13e2c3f65d3863de1e41b6f12bb02b6bee09f27a",
+      "applicableVersion": "android-web-v1",
+      "rationale": "iOS is not distributed in the Android/web v1 release; its source metadata remains tracked for a later iOS gate."
+    },
+    "privacyManifestInventoryVerified": { "status": "blocked", "responsibleOwner": "TerraLeb security owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "productionIdentifiersVerified": { "status": "blocked", "responsibleOwner": "TerraLeb release owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "privacyRightsFulfillmentVerified": { "status": "blocked", "responsibleOwner": "TerraLeb privacy owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "retentionAutomationVerified": { "status": "blocked", "responsibleOwner": "TerraLeb operations and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "notificationPrivacyVerified": { "status": "blocked", "responsibleOwner": "TerraLeb security owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "ugcModerationVerified": { "status": "blocked", "responsibleOwner": "TerraLeb moderation owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "accessibilityVerified": { "status": "blocked", "responsibleOwner": "TerraLeb product owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "softwareLicenseAndSbomVerified": { "status": "blocked", "responsibleOwner": "TerraLeb security owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "importProvenanceEnforcementVerified": { "status": "blocked", "responsibleOwner": "TerraLeb GIS and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" }
   },
   "mapSources": {
-    "openstreetmapOnlineReviewed": false,
-    "esriOnlineLicensed": false,
-    "esriOfflineLicensed": false,
-    "attributionVerified": false
+    "openstreetmapOnlineReviewed": { "status": "blocked", "responsibleOwner": "TerraLeb GIS and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "esriOnlineLicensed": { "status": "blocked", "responsibleOwner": "TerraLeb GIS and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "offlinePackageSourceRights": { "status": "blocked", "responsibleOwner": "TerraLeb GIS and legal owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "attributionVerified": { "status": "blocked", "responsibleOwner": "TerraLeb GIS owner", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" }
+  },
+  "excludedCapabilities": {
+    "esriOfflineRedistribution": {
+      "status": "not_in_release_scope",
+      "responsibleOwner": "TerraLeb GIS owner",
+      "reviewedAt": "2026-08-26T00:00:00.000Z",
+      "evidenceReference": "repo:apps/mobile/lib/features/map/data/offline_tile_cache_manager.dart@sha256:9d0a8ec3626bc9d98a439bfcea5c4adc5713239dc5836e01483bc70ec2898595",
+      "applicableVersion": "android-web-v1",
+      "rationale": "TerraLeb v1 does not redistribute or bulk-cache Esri tiles; offline imagery is being replaced by a TerraLeb-hosted Copernicus/OSM-derived package."
+    }
+  },
+  "legalDocuments": {
+    "privacy": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner and counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "terms": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner and counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "acceptable_use": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner and counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "important_notices": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner and counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "account_deletion": { "status": "blocked", "responsibleOwner": "TerraLeb legal owner and counsel", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "subprocessors": { "status": "blocked", "responsibleOwner": "TerraLeb legal and operations owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" },
+    "open_source": { "status": "blocked", "responsibleOwner": "TerraLeb legal and security owners", "reviewedAt": null, "evidenceReference": null, "applicableVersion": "android-web-v1" }
   },
   "notes": [
-    "This file intentionally blocks public production until accountable owners and counsel approve the recorded decisions.",
-    "Do not change booleans without an immutable evidence reference and review of the exact deployed policy/configuration.",
-    "Owner decision recorded 2026-08-13: the app is intended to be offered and targeted only in Lebanon. The territory/distribution gate remains false until counsel approval and store configuration evidence are recorded.",
-    "Owner product direction recorded 2026-08-16: direct account identifiers are erased and justified institutional records retain a pseudonymous masked contributor label such as A. H.; this is not legal anonymity.",
-    "Production deletion execution remains disabled until counsel or the designated legal owner approves the record basis, exact retained fields, visibility, retention, photos/location/free-text treatment, backup ageing, and user-facing wording."
+    "This register is an evidence gate, not a statement of legal compliance.",
+    "Only approved and explicitly allowed not-in-release-scope records may leave blocked status, and every such record requires immutable evidence for the exact release.",
+    "Production account deletion and legal enforcement remain disabled until their separate policy and configuration gates pass."
   ]
 }

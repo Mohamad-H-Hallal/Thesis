@@ -16,6 +16,8 @@ The canonical production Compose stack mounts these files by service:
 - secrets/smtp_password.txt
 - secrets/super_admin_password.txt
 - secrets/ai_callback_secret.txt
+- secrets/ai_internal_api_secret.txt
+- secrets/gee_service_account.json
 - secrets/firebase-admin/lebanese-gis-collector-df12b-adminsdk.json
 
 For staging, place equivalent values below `secrets/staging/`; never reuse

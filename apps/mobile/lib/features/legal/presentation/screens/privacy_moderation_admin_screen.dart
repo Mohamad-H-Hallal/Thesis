@@ -308,81 +308,168 @@ class _PrivacyModerationAdminScreenState
       return;
     }
     String status = nextStatuses.first;
-    final submission = await showDialog<({String status, String userMessage})>(
-      context: context,
-      builder: (dialogContext) => AppDialogControllerHost(
-        initialValues: [_defaultPrivacyMessage(item.type, status)],
-        builder: (dialogContext, controllers) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Update privacy request'),
-            content: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      isExpanded: true,
-                      initialValue: status,
-                      decoration: const InputDecoration(
-                        labelText: 'Next status',
-                      ),
-                      items: nextStatuses
-                          .map(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text(_humanize(value)),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        final previousDefault = _defaultPrivacyMessage(
-                          item.type,
-                          status,
-                        );
-                        setDialogState(() {
-                          status = value;
-                          if (controllers[0].text.trim().isEmpty ||
-                              controllers[0].text == previousDefault) {
-                            controllers[0].text = _defaultPrivacyMessage(
+    String? unfinishedWorkDecision;
+    String? responsibilityDecision;
+    final submission =
+        await showDialog<
+          ({
+            String status,
+            String userMessage,
+            String? unfinishedWorkDecision,
+            String? responsibilityDecision,
+          })
+        >(
+          context: context,
+          builder: (dialogContext) => AppDialogControllerHost(
+            initialValues: [_defaultPrivacyMessage(item.type, status)],
+            builder: (dialogContext, controllers) => StatefulBuilder(
+              builder: (context, setDialogState) => AlertDialog(
+                title: const Text('Update privacy request'),
+                content: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          initialValue: status,
+                          decoration: const InputDecoration(
+                            labelText: 'Next status',
+                          ),
+                          items: nextStatuses
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(_humanize(value)),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            final previousDefault = _defaultPrivacyMessage(
                               item.type,
                               status,
                             );
-                          }
-                        });
-                      },
+                            setDialogState(() {
+                              status = value;
+                              if (status != 'approved') {
+                                unfinishedWorkDecision = null;
+                                responsibilityDecision = null;
+                              }
+                              if (controllers[0].text.trim().isEmpty ||
+                                  controllers[0].text == previousDefault) {
+                                controllers[0].text = _defaultPrivacyMessage(
+                                  item.type,
+                                  status,
+                                );
+                              }
+                            });
+                          },
+                        ),
+                        if (item.type == PrivacyRequestType.deletion &&
+                            status == 'approved') ...[
+                          const SizedBox(height: AppSpacing.sm),
+                          DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            initialValue: unfinishedWorkDecision,
+                            decoration: const InputDecoration(
+                              labelText: 'Unfinished work',
+                            ),
+                            hint: const Text('Choose an action'),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'require_resolution',
+                                child: Text('Require resolution first'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'discard_unapproved',
+                                child: Text(
+                                  'Discard drafts and unapproved work',
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) => setDialogState(
+                              () => unfinishedWorkDecision = value,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            initialValue: responsibilityDecision,
+                            decoration: const InputDecoration(
+                              labelText: 'Responsibilities',
+                            ),
+                            hint: const Text('Choose an action'),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'release',
+                                child: Text(
+                                  'Release assignments and open cases',
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: 'confirmed_transferred',
+                                child: Text(
+                                  'Already transferred in admin tools',
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) => setDialogState(
+                              () => responsibilityDecision = value,
+                            ),
+                          ),
+                          if (unfinishedWorkDecision ==
+                              'discard_unapproved') ...[
+                            const SizedBox(height: AppSpacing.sm),
+                            Text(
+                              'Drafts, pending items, rejected items, and their files will be permanently removed.',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                            ),
+                          ],
+                        ],
+                        const SizedBox(height: AppSpacing.sm),
+                        AppTextField(
+                          label: 'Message to requester',
+                          controller: controllers[0],
+                          minLines: 2,
+                          maxLines: 3,
+                          maxLength: 1000,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: AppSpacing.sm),
-                    AppTextField(
-                      label: 'Message to requester',
-                      controller: controllers[0],
-                      minLines: 2,
-                      maxLines: 3,
-                      maxLength: 1000,
-                    ),
-                  ],
+                  ),
                 ),
+                actions: [
+                  AppDialogActions(
+                    cancel: TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    confirm: FilledButton(
+                      onPressed:
+                          item.type == PrivacyRequestType.deletion &&
+                              status == 'approved' &&
+                              (unfinishedWorkDecision == null ||
+                                  responsibilityDecision == null)
+                          ? null
+                          : () => Navigator.of(dialogContext).pop((
+                              status: status,
+                              userMessage: controllers[0].text,
+                              unfinishedWorkDecision: unfinishedWorkDecision,
+                              responsibilityDecision: responsibilityDecision,
+                            )),
+                      child: const Text('Save'),
+                    ),
+                  ),
+                ],
               ),
             ),
-            actions: [
-              AppDialogActions(
-                cancel: TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                confirm: FilledButton(
-                  onPressed: () => Navigator.of(
-                    dialogContext,
-                  ).pop((status: status, userMessage: controllers[0].text)),
-                  child: const Text('Save'),
-                ),
-              ),
-            ],
           ),
-        ),
-      ),
-    );
+        );
     if (submission == null || !mounted) return;
     if (submission.userMessage.trim().isEmpty) {
       AppSnackbar.showError(context, 'Add a clear message for the requester.');
@@ -395,6 +482,8 @@ class _PrivacyModerationAdminScreenState
             requestId: item.id,
             status: submission.status,
             userMessage: submission.userMessage,
+            unfinishedWorkDecision: submission.unfinishedWorkDecision,
+            responsibilityDecision: submission.responsibilityDecision,
           );
       bumpRealtimeScope(ref, const RealtimeScope('privacy_admin_queue', 'all'));
       ref.invalidate(paginatedPrivacyAdminRequestsProvider);

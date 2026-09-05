@@ -2,67 +2,62 @@
   "schemaVersion": 1,
   "image": "gis-phase6-alloy-audit:local",
   "owner": "Repository owner / release security maintainer",
+  "reviewedAt": "2026-09-05",
   "reviewBy": "2026-10-01",
   "findings": [
     {
-      "id": "CVE-2026-27456",
-      "package": "bsdutils",
-      "installedVersion": "1:2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
+      "id": "CVE-2026-18374",
+      "package": "libc-bin",
+      "installedVersion": "2.39-0ubuntu8.8",
+      "decision": "accepted_with_mitigation",
+      "rationale": "Ubuntu rates this local, high-complexity glibc fopen ccs-mode issue Medium and has deferred a fix. Alloy does not construct fopen mode strings from user input.",
+      "mitigation": "Run the log agent as a restricted, read-only container without an interactive shell or arbitrary local-code path; monitor the Ubuntu Noble package and rebuild immediately when a fixed package is published.",
+      "evidence": "https://ubuntu.com/security/CVE-2026-18374"
     },
     {
-      "id": "CVE-2026-27456",
-      "package": "libblkid1",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
+      "id": "CVE-2026-18374",
+      "package": "libc6",
+      "installedVersion": "2.39-0ubuntu8.8",
+      "decision": "accepted_with_mitigation",
+      "rationale": "Ubuntu rates this local, high-complexity glibc fopen ccs-mode issue Medium and has deferred a fix. Alloy does not construct fopen mode strings from user input.",
+      "mitigation": "Run the log agent as a restricted, read-only container without an interactive shell or arbitrary local-code path; monitor the Ubuntu Noble package and rebuild immediately when a fixed package is published.",
+      "evidence": "https://ubuntu.com/security/CVE-2026-18374"
     },
     {
-      "id": "CVE-2026-27456",
-      "package": "libmount1",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
+      "id": "CVE-2026-18477",
+      "package": "tar",
+      "installedVersion": "1.35+dfsg-3ubuntu0.4",
+      "decision": "accepted_with_mitigation",
+      "rationale": "Ubuntu rates this local, high-complexity incremental restore issue Medium and reports no upstream patch. The runtime container does not perform incremental backups or restore attacker-writable directories.",
+      "mitigation": "Do not use the Alloy container for backup or archive restoration; keep its filesystem and privileges restricted and replace the base package when Ubuntu publishes a fix.",
+      "evidence": "https://ubuntu.com/security/CVE-2026-18477"
     },
     {
-      "id": "CVE-2026-13757",
-      "package": "libp11-kit0",
-      "installedVersion": "0.25.3-4ubuntu2.1",
-      "decision": "accepted_with_mitigation"
-    },
-    {
-      "id": "CVE-2026-27456",
-      "package": "libsmartcols1",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
-    },
-    {
-      "id": "CVE-2026-27456",
-      "package": "libuuid1",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
-    },
-    {
-      "id": "CVE-2026-27456",
-      "package": "mount",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
-    },
-    {
-      "id": "CVE-2026-27456",
-      "package": "util-linux",
-      "installedVersion": "2.39.3-9ubuntu6.5",
-      "decision": "accepted_with_mitigation"
+      "id": "CVE-2026-18508",
+      "package": "tar",
+      "installedVersion": "1.35+dfsg-3ubuntu0.4",
+      "decision": "accepted_with_mitigation",
+      "rationale": "The issue requires extracting an untrusted archive with --one-top-level as a security boundary. The Alloy runtime neither accepts archives nor invokes tar.",
+      "mitigation": "Never extract untrusted archives in the Alloy runtime; retain read-only filesystems and low privileges, and rebuild when a fixed Ubuntu package is available.",
+      "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-18508"
     },
     {
       "id": "CVE-2026-33997",
       "package": "github.com/docker/docker",
       "installedVersion": "v28.5.2+incompatible",
-      "decision": "not_affected"
+      "decision": "not_affected",
+      "rationale": "Alloy does not expose or mount a Docker socket and the affected Docker daemon plugin-install path is not executed.",
+      "mitigation": "Keep Docker discovery disabled, do not mount a Docker socket, and enforce the matching OpenVEX deployment constraint.",
+      "evidence": "infra/alloy/alloy.openvex.json"
     },
     {
       "id": "CVE-2026-41568",
       "package": "github.com/docker/docker",
       "installedVersion": "v28.5.2+incompatible",
-      "decision": "not_affected"
+      "decision": "not_affected",
+      "rationale": "Alloy does not expose or mount a Docker socket and the affected Docker archive/copy handler is not executed.",
+      "mitigation": "Keep Docker discovery disabled, do not mount a Docker socket, and enforce the matching OpenVEX deployment constraint.",
+      "evidence": "infra/alloy/alloy.openvex.json"
     }
   ]
 }

@@ -653,8 +653,9 @@ void main() {
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
       );
-      expect(projectTitle.maxLines, 1);
-      expect(projectTitle.overflow, TextOverflow.ellipsis);
+      expect(projectTitle.maxLines, isNull);
+      expect(projectTitle.softWrap, isTrue);
+      expect(projectTitle.overflow, isNull);
       expect(find.text('Fruit Trees'), findsOneWidget);
       expect(find.text('2 features'), findsWidgets);
 
@@ -846,6 +847,53 @@ void main() {
       expect(find.text('Offline contribution'), findsNothing);
     },
   );
+
+  testWidgets('offline tools explain when no verified package is published', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith((ref) async => null),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byTooltip('Offline map'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Offline map not published yet'), findsOneWidget);
+    expect(
+      find.textContaining('Online maps and saved drafts still work'),
+      findsOneWidget,
+    );
+    expect(find.text('Check again'), findsOneWidget);
+    expect(
+      find.text('Offline map information is not available yet.'),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'viewer project map stays read-only and shows only approved features',
@@ -1221,6 +1269,75 @@ void main() {
     expect(find.text('Hybrid'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'submission review wraps the full project name on compact screens',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 700));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      const longProjectName =
+          'South Lebanon Fruit Trees Training Dataset for Sustainable Agriculture';
+      final project = _projectSummary(
+        name: longProjectName,
+        collectionFormSchema: const CollectionFormSchema(
+          version: 'v1.0',
+          fields: <CollectionFormFieldSchema>[],
+        ),
+      );
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            projectListProvider.overrideWith(
+              (ref, scope) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => const <MapFeatureSummary>[],
+            ),
+            localDraftFeaturesProvider.overrideWith(
+              (ref) async => const <LocalDraftFeature>[],
+            ),
+          ],
+          child: const AddFeatureScreen(
+            initialProjectId: 'project-1',
+            captureSeed: AddFeatureCaptureSeed(
+              projectId: 'project-1',
+              geometryType: 'Point',
+              vertices: <LatLng>[LatLng(33.901, 35.511)],
+              gpsAccuracyMeters: 4.7,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      for (var step = 0; step < 2; step += 1) {
+        final next = find.widgetWithText(FilledButton, 'Next');
+        await tester.ensureVisible(next);
+        await tester.tap(next);
+        await tester.pump();
+      }
+
+      final projectLabel = find.byKey(
+        const Key('submission-review-project-name'),
+      );
+      await tester.ensureVisible(projectLabel);
+      final projectText = tester.widget<Text>(projectLabel);
+
+      expect(find.text(longProjectName), findsOneWidget);
+      expect(projectText.softWrap, isTrue);
+      expect(projectText.maxLines, isNull);
+      expect(projectText.overflow, isNull);
+      expect(tester.getSize(projectLabel).height, greaterThan(24));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'add feature screen starts at attributes when launched from project map capture',

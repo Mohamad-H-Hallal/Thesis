@@ -19,7 +19,7 @@ Approval schedules the background export. Do not mark it completed manually. A c
 
 ## Account deletion
 
-Approval schedules execution only after an immediate eligibility check. Select an active administrator when responsibilities require transfer. Do not combine deletion with contributor deactivation. Production execution stays disabled until all configured approval references exist. See `ACCOUNT_DELETION_AND_PSEUDONYMIZATION.md`.
+Approval requires explicit choices for unfinished work and responsibilities. Select **Require resolution first** when any work must be decided through its normal workflow. Select **Discard drafts and unapproved work** only when the protected administrator is authorized to permanently remove those records and files. Choose **Already transferred** only after the normal admin tools show no residual assignment, AI, privacy, or moderation responsibility; otherwise choose **Release**. No destructive option is preselected. Do not combine deletion with contributor deactivation. Production execution stays disabled until all configured approval references exist. See `ACCOUNT_DELETION_AND_PSEUDONYMIZATION.md`.
 
 ## Failure and evidence
 

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "package_version": "REPLACE_WITH_IMMUTABLE_VERSION",
+  "tile_count": 1,
+  "zoom_min": 7,
+  "zoom_max": 15,
+  "tile_scheme": "xyz",
+  "dataset_code": "copernicus_sentinel2_osm_labels",
+  "source_acquisition_start": "YYYY-MM-DD",
+  "source_acquisition_end": "YYYY-MM-DD",
+  "source_scene_ids": [
+    "REPLACE_WITH_COPERNICUS_SCENE_ID"
+  ],
+  "source_terms_url": "https://REPLACE_WITH_REVIEWED_SOURCE_TERMS",
+  "source_attribution": "REPLACE_WITH_APPROVED_ATTRIBUTION",
+  "source_resolution_meters": 10,
+  "processing_manifest": {
+    "cloud_shadow_filter": "REPLACE_WITH_CLASSES_AND_THRESHOLD",
+    "mosaic_method": "REPLACE_WITH_METHOD_AND_ORDER",
+    "clipping": "REPLACE_WITH_LEBANON_BOUNDARY_SOURCE_AND_VERSION",
+    "reprojection": "EPSG:3857",
+    "resampling": "REPLACE_WITH_IMAGERY_AND_LABEL_METHODS",
+    "tool_versions": {
+      "gdal": "REPLACE_WITH_EXACT_VERSION",
+      "renderer": "REPLACE_WITH_NAME_AND_EXACT_VERSION"
+    },
+    "osm_extract": {
+      "provider": "REPLACE_WITH_EXTRACT_PROVIDER",
+      "downloaded_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "sha256": "REPLACE_WITH_SHA256",
+      "terms_url": "https://REPLACE_WITH_REVIEWED_TERMS"
+    }
+  }
+}

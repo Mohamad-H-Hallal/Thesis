@@ -1,10 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants, createReadStream } from 'node:fs';
+import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+  type HeadObjectCommandOutput,
+} from '@aws-sdk/client-s3';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 
-type StorageBucket = 'uploads' | 'exports';
+type StorageBucket = 'uploads' | 'exports' | 'offline' | 'ai' | 'backups';
 
 interface StorageObjectLocation {
   bucket: StorageBucket;
@@ -12,6 +23,7 @@ interface StorageObjectLocation {
   reference: string;
   localPath: string;
   size: number;
+  contentType?: string;
 }
 
 interface StorageObjectInfo extends StorageObjectLocation {
@@ -44,12 +56,20 @@ interface StorageAdapter {
     reference: string,
     allowedBuckets?: readonly StorageBucket[],
   ): Promise<StorageObjectLocation>;
+  releaseLocalCopy(reference: string, allowedBuckets?: readonly StorageBucket[]): Promise<void>;
   info(reference: string, allowedBuckets?: readonly StorageBucket[]): Promise<StorageObjectInfo>;
   exists(reference: string, allowedBuckets?: readonly StorageBucket[]): Promise<boolean>;
-  openReadStream(
+  openReadStream(reference: string, allowedBuckets?: readonly StorageBucket[]): Promise<Readable>;
+  openReadRange(
     reference: string,
+    range: { start: number; end: number },
     allowedBuckets?: readonly StorageBucket[],
   ): Promise<Readable>;
+  writeStream(
+    reference: string,
+    contents: Readable,
+    expected: { size: number; sha256: string; contentType?: string },
+  ): Promise<StorageObjectInfo>;
   writeExclusive(reference: string, contents: Buffer): Promise<StorageObjectInfo>;
   writeAtomic(reference: string, contents: Buffer): Promise<StorageObjectInfo>;
   copyVerified(
@@ -61,8 +81,29 @@ interface StorageAdapter {
   list(bucket: StorageBucket, prefix?: string): Promise<StorageListEntry[]>;
 }
 
-const canonicalPattern = /^storage:\/\/(uploads|exports)\/(.+)$/;
+const canonicalPattern = /^storage:\/\/(uploads|exports|offline|ai|backups)\/(.+)$/;
 const sha256Pattern = /^[0-9a-f]{64}$/;
+
+const contentTypeForKey = (key: string): string => {
+  const extension = path.posix.extname(key).toLowerCase();
+  return (
+    (
+      {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.zip': 'application/zip',
+        '.json': 'application/json',
+        '.geojson': 'application/geo+json',
+        '.csv': 'text/csv; charset=utf-8',
+        '.pmtiles': 'application/vnd.pmtiles',
+        '.mbtiles': 'application/vnd.sqlite3',
+      } as Record<string, string>
+    )[extension] ?? 'application/octet-stream'
+  );
+};
 
 const safeStorageKey = (value: string): string => {
   const key = value.trim();
@@ -133,22 +174,27 @@ const hashFile = async (filePath: string): Promise<string> =>
 class LocalStorageAdapter implements StorageAdapter {
   readonly driver = 'local';
 
-  constructor(
-    private readonly rootOverrides: Partial<Record<StorageBucket, string>> = {},
-  ) {}
+  constructor(private readonly rootOverrides: Partial<Record<StorageBucket, string>> = {}) {}
 
   private root(bucket: StorageBucket): string {
     const configured =
       this.rootOverrides[bucket] ??
       (bucket === 'uploads'
-        ? process.env.UPLOAD_DIR ?? './uploads'
-        : process.env.EXPORT_DIR ?? './exports');
+        ? (process.env.UPLOAD_DIR ?? './uploads')
+        : bucket === 'exports'
+          ? (process.env.EXPORT_DIR ?? './exports')
+          : bucket === 'offline'
+            ? (process.env.OFFLINE_PACKAGE_DIR ?? './offline-packages')
+            : bucket === 'ai'
+              ? (process.env.AI_PIPELINE_OUTPUT_ROOT ?? './ai-outputs')
+              : (process.env.BACKUP_TEMP_DIR ?? './backups'));
     return path.resolve(configured);
   }
 
-  private async prepareParent(
-    resolved: { bucket: StorageBucket; localPath: string },
-  ): Promise<void> {
+  private async prepareParent(resolved: {
+    bucket: StorageBucket;
+    localPath: string;
+  }): Promise<void> {
     const root = this.root(resolved.bucket);
     const parent = path.dirname(resolved.localPath);
     if (parent !== root && !isContainedPath(root, parent)) {
@@ -250,11 +296,7 @@ class LocalStorageAdapter implements StorageAdapter {
     if (!resolved) {
       throw new Error('Storage reference is outside configured roots.');
     }
-    await assertNoSymlinkTraversal(
-      this.root(resolved.bucket),
-      resolved.localPath,
-      false,
-    );
+    await assertNoSymlinkTraversal(this.root(resolved.bucket), resolved.localPath, false);
     const stat = await fs.lstat(resolved.localPath);
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error('Storage reference does not identify a regular file.');
@@ -262,7 +304,15 @@ class LocalStorageAdapter implements StorageAdapter {
     return {
       ...resolved,
       size: stat.size,
+      contentType: contentTypeForKey(resolved.key),
     };
+  }
+
+  async releaseLocalCopy(
+    _reference: string,
+    _allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<void> {
+    // A local object is authoritative storage, not an expendable materialization.
   }
 
   async info(
@@ -311,8 +361,68 @@ class LocalStorageAdapter implements StorageAdapter {
     return createReadStream(located.localPath);
   }
 
+  async openReadRange(
+    reference: string,
+    range: { start: number; end: number },
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<Readable> {
+    if (
+      !Number.isSafeInteger(range.start) ||
+      !Number.isSafeInteger(range.end) ||
+      range.start < 0 ||
+      range.end < range.start
+    ) {
+      throw new Error('Storage byte range is invalid.');
+    }
+    const located = await this.locate(reference, allowedBuckets);
+    if (range.end >= located.size) throw new Error('Storage byte range exceeds the object.');
+    return createReadStream(located.localPath, { start: range.start, end: range.end });
+  }
+
+  async writeStream(
+    reference: string,
+    contents: Readable,
+    expected: { size: number; sha256: string; contentType?: string },
+  ): Promise<StorageObjectInfo> {
+    if (!sha256Pattern.test(expected.sha256) || expected.size < 0) {
+      throw new Error('Expected storage size or checksum is invalid.');
+    }
+    const resolved = this.resolve(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
+    if (!resolved) {
+      throw new Error('Storage reference is outside configured roots.');
+    }
+    await this.prepareParent(resolved);
+    const temporaryPath = `${resolved.localPath}.${randomUUID()}.tmp`;
+    const hash = createHash('sha256');
+    let size = 0;
+    const verifier = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        size += chunk.length;
+        hash.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(
+        contents,
+        verifier,
+        createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }),
+      );
+      const checksum = hash.digest('hex');
+      if (size !== expected.size || checksum !== expected.sha256) {
+        throw new Error('Streamed storage object failed size or checksum verification.');
+      }
+      await fs.link(temporaryPath, resolved.localPath);
+    } catch (error) {
+      await fs.rm(temporaryPath, { force: true });
+      throw error;
+    }
+    await fs.rm(temporaryPath, { force: true });
+    return this.info(resolved.reference, [resolved.bucket]);
+  }
+
   async writeExclusive(reference: string, contents: Buffer): Promise<StorageObjectInfo> {
-    const resolved = this.resolve(reference);
+    const resolved = this.resolve(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
     if (!resolved) {
       throw new Error('Storage reference is outside configured roots.');
     }
@@ -322,16 +432,14 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 
   async writeAtomic(reference: string, contents: Buffer): Promise<StorageObjectInfo> {
-    const resolved = this.resolve(reference);
+    const resolved = this.resolve(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
     if (!resolved) {
       throw new Error('Storage reference is outside configured roots.');
     }
     await this.prepareParent(resolved);
     const directoryKey = path.posix.dirname(resolved.key);
     const temporaryKey =
-      directoryKey === '.'
-        ? `.${randomUUID()}.tmp`
-        : `${directoryKey}/.${randomUUID()}.tmp`;
+      directoryKey === '.' ? `.${randomUUID()}.tmp` : `${directoryKey}/.${randomUUID()}.tmp`;
     const temporaryReference = this.reference(resolved.bucket, temporaryKey);
     const temporary = this.resolve(temporaryReference, [resolved.bucket]);
     if (!temporary) {
@@ -356,7 +464,13 @@ class LocalStorageAdapter implements StorageAdapter {
     if (expected.sha256 && !sha256Pattern.test(expected.sha256)) {
       throw new Error('Expected storage checksum is invalid.');
     }
-    const sourceBefore = await this.info(sourceReference);
+    const sourceBefore = await this.info(sourceReference, [
+      'uploads',
+      'exports',
+      'offline',
+      'ai',
+      'backups',
+    ]);
     if (
       (expected.size !== undefined && sourceBefore.size !== expected.size) ||
       (expected.sha256 !== undefined && sourceBefore.sha256 !== expected.sha256)
@@ -364,18 +478,20 @@ class LocalStorageAdapter implements StorageAdapter {
       throw new Error('Source object does not match the reviewed size and checksum.');
     }
 
-    const destination = this.resolve(destinationReference);
+    const destination = this.resolve(destinationReference, [
+      'uploads',
+      'exports',
+      'offline',
+      'ai',
+      'backups',
+    ]);
     if (!destination) {
       throw new Error('Destination storage reference is outside configured roots.');
     }
     await this.prepareParent(destination);
     let destinationAlreadyExisted = false;
     try {
-      await fs.copyFile(
-        sourceBefore.localPath,
-        destination.localPath,
-        fsConstants.COPYFILE_EXCL,
-      );
+      await fs.copyFile(sourceBefore.localPath, destination.localPath, fsConstants.COPYFILE_EXCL);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
         throw error;
@@ -410,24 +526,18 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 
   async remove(reference: string): Promise<void> {
-    const resolved = this.resolve(reference);
+    const resolved = this.resolve(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
     if (!resolved) {
       throw new Error('Storage reference is outside configured roots.');
     }
-    await assertNoSymlinkTraversal(
-      this.root(resolved.bucket),
-      resolved.localPath,
-      true,
-    );
+    await assertNoSymlinkTraversal(this.root(resolved.bucket), resolved.localPath, true);
     await fs.unlink(resolved.localPath);
   }
 
   async list(bucket: StorageBucket, prefix = ''): Promise<StorageListEntry[]> {
     const root = this.root(bucket);
     const normalizedPrefix = prefix.length > 0 ? safeStorageKey(prefix) : '';
-    const start = normalizedPrefix
-      ? path.resolve(root, ...normalizedPrefix.split('/'))
-      : root;
+    const start = normalizedPrefix ? path.resolve(root, ...normalizedPrefix.split('/')) : root;
     if (start !== root && !isContainedPath(root, start)) {
       throw new Error('Storage inventory prefix is outside its configured root.');
     }
@@ -484,10 +594,612 @@ class LocalStorageAdapter implements StorageAdapter {
   }
 }
 
-const storageAdapter = new LocalStorageAdapter();
+interface S3StorageAdapterOptions {
+  endpoint: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  forcePathStyle: boolean;
+  prefix: string;
+  tempDirectory: string;
+  maxObjectBytes: number;
+  requestTimeoutMs: number;
+  maxAttempts: number;
+  serverSideEncryption: 'AES256';
+  buckets: Record<StorageBucket, string>;
+  client?: S3Client;
+}
+
+const isCanonicalReference = (value: string): boolean => canonicalPattern.test(value.trim());
+
+const isStorageNotFound = (error: unknown): boolean => {
+  const candidate = error as {
+    name?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    candidate?.$metadata?.httpStatusCode === 404 ||
+    candidate?.name === 'NotFound' ||
+    candidate?.name === 'NoSuchKey' ||
+    candidate?.Code === 'NoSuchKey'
+  );
+};
+
+const isStoragePreconditionFailure = (error: unknown): boolean => {
+  const candidate = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return candidate?.$metadata?.httpStatusCode === 412 || candidate?.name === 'PreconditionFailed';
+};
+
+const readableObjectBody = (body: unknown): Readable => {
+  if (body instanceof Readable) {
+    return body;
+  }
+  if (body && typeof (body as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] === 'function') {
+    return Readable.from(body as AsyncIterable<Uint8Array>);
+  }
+  throw new Error('Object storage returned an unsupported response body.');
+};
+
+const hashReadable = async (
+  stream: Readable,
+  maxBytes: number,
+): Promise<{ sha256: string; size: number }> => {
+  const hash = createHash('sha256');
+  let size = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > maxBytes) {
+      stream.destroy();
+      throw new Error('Storage object exceeds the configured maximum size.');
+    }
+    hash.update(buffer);
+  }
+  return { sha256: hash.digest('hex'), size };
+};
+
+class S3StorageAdapter implements StorageAdapter {
+  readonly driver = 's3';
+
+  private readonly client: S3Client;
+
+  private readonly cacheAdapter: LocalStorageAdapter;
+
+  private readonly legacyLocalAdapter: LocalStorageAdapter;
+
+  constructor(private readonly options: S3StorageAdapterOptions) {
+    this.client =
+      options.client ??
+      new S3Client({
+        endpoint: options.endpoint,
+        region: options.region,
+        forcePathStyle: options.forcePathStyle,
+        credentials: {
+          accessKeyId: options.accessKeyId,
+          secretAccessKey: options.secretAccessKey,
+        },
+        maxAttempts: options.maxAttempts,
+        requestHandler: new NodeHttpHandler({
+          connectionTimeout: options.requestTimeoutMs,
+          requestTimeout: options.requestTimeoutMs,
+        }),
+      });
+    const cacheRoots = Object.fromEntries(
+      (['uploads', 'exports', 'offline', 'ai', 'backups'] as StorageBucket[]).map((bucket) => [
+        bucket,
+        path.join(path.resolve(options.tempDirectory), 'cache', bucket),
+      ]),
+    ) as Record<StorageBucket, string>;
+    this.cacheAdapter = new LocalStorageAdapter(cacheRoots);
+    this.legacyLocalAdapter = new LocalStorageAdapter();
+  }
+
+  private physicalBucket(bucket: StorageBucket): string {
+    return this.options.buckets[bucket];
+  }
+
+  private remoteKey(key: string): string {
+    const prefix = this.options.prefix.replace(/^\/+|\/+$/g, '');
+    return prefix ? `${prefix}/${key}` : key;
+  }
+
+  private canonical(
+    value: string,
+    allowedBuckets: readonly StorageBucket[],
+  ): { bucket: StorageBucket; key: string; reference: string; localPath: string } | null {
+    const match = canonicalPattern.exec(value.trim());
+    if (!match) {
+      return null;
+    }
+    const bucket = match[1] as StorageBucket;
+    if (!allowedBuckets.includes(bucket)) {
+      return null;
+    }
+    let key: string;
+    try {
+      key = safeStorageKey(match[2]);
+    } catch {
+      return null;
+    }
+    const reference = this.reference(bucket, key);
+    return this.cacheAdapter.resolve(reference, [bucket]);
+  }
+
+  private async head(resolved: {
+    bucket: StorageBucket;
+    key: string;
+  }): Promise<HeadObjectCommandOutput> {
+    return this.client.send(
+      new HeadObjectCommand({
+        Bucket: this.physicalBucket(resolved.bucket),
+        Key: this.remoteKey(resolved.key),
+      }),
+    );
+  }
+
+  private async remoteReadStream(
+    resolved: { bucket: StorageBucket; key: string },
+    range?: { start: number; end: number },
+  ): Promise<{ stream: Readable; contentType?: string; size?: number }> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.physicalBucket(resolved.bucket),
+        Key: this.remoteKey(resolved.key),
+        ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+      }),
+    );
+    const size = response.ContentLength;
+    if (size !== undefined && size > this.options.maxObjectBytes) {
+      const body = response.Body as { destroy?: () => void } | undefined;
+      body?.destroy?.();
+      throw new Error('Storage object exceeds the configured maximum size.');
+    }
+    return {
+      stream: readableObjectBody(response.Body),
+      ...(response.ContentType ? { contentType: response.ContentType } : {}),
+      ...(size !== undefined ? { size } : {}),
+    };
+  }
+
+  reference(bucket: StorageBucket, key: string): string {
+    return `storage://${bucket}/${safeStorageKey(key)}`;
+  }
+
+  resolve(
+    value: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): { bucket: StorageBucket; key: string; reference: string; localPath: string } | null {
+    if (typeof value !== 'string' || !value.trim()) {
+      return null;
+    }
+    return (
+      this.canonical(value, allowedBuckets) ??
+      this.legacyLocalAdapter.resolve(value, allowedBuckets)
+    );
+  }
+
+  async locate(
+    reference: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<StorageObjectLocation> {
+    if (!isCanonicalReference(reference)) {
+      return this.legacyLocalAdapter.locate(reference, allowedBuckets);
+    }
+    const remote = await this.info(reference, allowedBuckets);
+    try {
+      const cached = await this.cacheAdapter.info(remote.reference, [remote.bucket]);
+      if (cached.size === remote.size && cached.sha256 === remote.sha256) {
+        return { ...remote, localPath: cached.localPath };
+      }
+      await this.cacheAdapter.remove(remote.reference);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        await this.cacheAdapter.remove(remote.reference).catch(() => undefined);
+      }
+    }
+    const { stream } = await this.remoteReadStream(remote);
+    try {
+      await this.cacheAdapter.writeStream(remote.reference, stream, {
+        size: remote.size,
+        sha256: remote.sha256,
+        ...(remote.contentType ? { contentType: remote.contentType } : {}),
+      });
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        throw error;
+      }
+    }
+    const cached = await this.cacheAdapter.info(remote.reference, [remote.bucket]);
+    if (cached.size !== remote.size || cached.sha256 !== remote.sha256) {
+      await this.cacheAdapter.remove(remote.reference).catch(() => undefined);
+      throw new Error('Materialized storage object failed checksum verification.');
+    }
+    return { ...remote, localPath: cached.localPath };
+  }
+
+  async releaseLocalCopy(
+    reference: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<void> {
+    if (!isCanonicalReference(reference)) {
+      return;
+    }
+    const resolved = this.canonical(reference, allowedBuckets);
+    if (!resolved) {
+      throw new Error('Storage reference is outside configured buckets.');
+    }
+    await this.cacheAdapter.remove(resolved.reference).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+  }
+
+  async info(
+    reference: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<StorageObjectInfo> {
+    if (!isCanonicalReference(reference)) {
+      return this.legacyLocalAdapter.info(reference, allowedBuckets);
+    }
+    const resolved = this.canonical(reference, allowedBuckets);
+    if (!resolved) {
+      throw new Error('Storage reference is outside configured buckets.');
+    }
+    const metadata = await this.head(resolved);
+    const size = metadata.ContentLength;
+    if (size === undefined || size < 0 || size > this.options.maxObjectBytes) {
+      throw new Error('Storage object size is missing or outside configured limits.');
+    }
+    let sha256 = String(metadata.Metadata?.sha256 ?? '').toLowerCase();
+    if (!sha256Pattern.test(sha256)) {
+      const downloaded = await this.remoteReadStream(resolved);
+      const calculated = await hashReadable(downloaded.stream, this.options.maxObjectBytes);
+      if (calculated.size !== size) {
+        throw new Error('Storage object changed while its checksum was calculated.');
+      }
+      sha256 = calculated.sha256;
+    }
+    return {
+      ...resolved,
+      size,
+      sha256,
+      ...(metadata.ContentType ? { contentType: metadata.ContentType } : {}),
+    };
+  }
+
+  async exists(
+    reference: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<boolean> {
+    if (!isCanonicalReference(reference)) {
+      return this.legacyLocalAdapter.exists(reference, allowedBuckets);
+    }
+    const resolved = this.canonical(reference, allowedBuckets);
+    if (!resolved) {
+      return false;
+    }
+    try {
+      await this.head(resolved);
+      return true;
+    } catch (error) {
+      if (isStorageNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async openReadStream(
+    reference: string,
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<Readable> {
+    if (!isCanonicalReference(reference)) {
+      return this.legacyLocalAdapter.openReadStream(reference, allowedBuckets);
+    }
+    const resolved = this.canonical(reference, allowedBuckets);
+    if (!resolved) {
+      throw new Error('Storage reference is outside configured buckets.');
+    }
+    return (await this.remoteReadStream(resolved)).stream;
+  }
+
+  async openReadRange(
+    reference: string,
+    range: { start: number; end: number },
+    allowedBuckets: readonly StorageBucket[] = ['uploads', 'exports'],
+  ): Promise<Readable> {
+    if (!isCanonicalReference(reference)) {
+      return this.legacyLocalAdapter.openReadRange(reference, range, allowedBuckets);
+    }
+    const resolved = this.canonical(reference, allowedBuckets);
+    if (
+      !resolved ||
+      !Number.isSafeInteger(range.start) ||
+      !Number.isSafeInteger(range.end) ||
+      range.start < 0 ||
+      range.end < range.start
+    ) {
+      throw new Error('Storage byte range is invalid.');
+    }
+    const metadata = await this.head(resolved);
+    if (metadata.ContentLength === undefined || range.end >= metadata.ContentLength) {
+      throw new Error('Storage byte range exceeds the object.');
+    }
+    return (await this.remoteReadStream(resolved, range)).stream;
+  }
+
+  async writeStream(
+    reference: string,
+    contents: Readable,
+    expected: { size: number; sha256: string; contentType?: string },
+  ): Promise<StorageObjectInfo> {
+    const resolved = this.canonical(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
+    if (
+      !resolved ||
+      expected.size < 0 ||
+      expected.size > this.options.maxObjectBytes ||
+      !sha256Pattern.test(expected.sha256)
+    ) {
+      throw new Error('Storage destination, size, or checksum is invalid.');
+    }
+    if (await this.exists(resolved.reference, [resolved.bucket])) {
+      const error = new Error('Storage object already exists.') as NodeJS.ErrnoException;
+      error.code = 'EEXIST';
+      throw error;
+    }
+    const hash = createHash('sha256');
+    let size = 0;
+    const verifier = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        size += chunk.length;
+        if (size > expected.size) {
+          callback(new Error('Streamed storage object exceeds its reviewed size.'));
+          return;
+        }
+        hash.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.physicalBucket(resolved.bucket),
+          Key: this.remoteKey(resolved.key),
+          Body: contents.pipe(verifier),
+          ContentLength: expected.size,
+          ContentType: expected.contentType ?? contentTypeForKey(resolved.key),
+          IfNoneMatch: '*',
+          Metadata: { sha256: expected.sha256 },
+          ServerSideEncryption: this.options.serverSideEncryption,
+        }),
+      );
+      const calculated = hash.digest('hex');
+      if (size !== expected.size || calculated !== expected.sha256) {
+        await this.remove(resolved.reference).catch(() => undefined);
+        throw new Error('Streamed storage object failed size or checksum verification.');
+      }
+      const stored = await this.info(resolved.reference, [resolved.bucket]);
+      if (stored.size !== expected.size || stored.sha256 !== expected.sha256) {
+        await this.remove(resolved.reference).catch(() => undefined);
+        throw new Error('Stored object failed post-upload verification.');
+      }
+      return stored;
+    } catch (error) {
+      if (!isStoragePreconditionFailure(error)) {
+        throw error;
+      }
+      const conflict = new Error('Storage object already exists.') as NodeJS.ErrnoException;
+      conflict.code = 'EEXIST';
+      throw conflict;
+    }
+  }
+
+  async writeExclusive(reference: string, contents: Buffer): Promise<StorageObjectInfo> {
+    const resolved = this.canonical(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
+    if (!resolved || contents.length > this.options.maxObjectBytes) {
+      throw new Error('Storage destination or object size is invalid.');
+    }
+    const sha256 = createHash('sha256').update(contents).digest('hex');
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.physicalBucket(resolved.bucket),
+          Key: this.remoteKey(resolved.key),
+          Body: contents,
+          ContentLength: contents.length,
+          ContentType: contentTypeForKey(resolved.key),
+          IfNoneMatch: '*',
+          Metadata: { sha256 },
+          ServerSideEncryption: this.options.serverSideEncryption,
+        }),
+      );
+    } catch (error) {
+      if (isStoragePreconditionFailure(error)) {
+        const conflict = new Error('Storage object already exists.') as NodeJS.ErrnoException;
+        conflict.code = 'EEXIST';
+        throw conflict;
+      }
+      throw error;
+    }
+    const stored = await this.info(resolved.reference, [resolved.bucket]);
+    if (stored.size !== contents.length || stored.sha256 !== sha256) {
+      await this.remove(resolved.reference).catch(() => undefined);
+      throw new Error('Stored object failed post-upload verification.');
+    }
+    return stored;
+  }
+
+  async writeAtomic(reference: string, contents: Buffer): Promise<StorageObjectInfo> {
+    return this.writeExclusive(reference, contents);
+  }
+
+  async copyVerified(
+    sourceReference: string,
+    destinationReference: string,
+    expected: { size?: number; sha256?: string } = {},
+  ): Promise<VerifiedCopyResult> {
+    if (expected.sha256 && !sha256Pattern.test(expected.sha256)) {
+      throw new Error('Expected storage checksum is invalid.');
+    }
+    const source = await this.info(sourceReference);
+    if (
+      (expected.size !== undefined && source.size !== expected.size) ||
+      (expected.sha256 !== undefined && source.sha256 !== expected.sha256)
+    ) {
+      throw new Error('Source object does not match the reviewed size and checksum.');
+    }
+    const destination = this.canonical(destinationReference, [
+      'uploads',
+      'exports',
+      'offline',
+      'ai',
+      'backups',
+    ]);
+    if (!destination) {
+      throw new Error('Destination must be a canonical storage reference.');
+    }
+    let destinationAlreadyExisted = await this.exists(destination.reference, [destination.bucket]);
+    if (!destinationAlreadyExisted) {
+      const sourceStream = await this.openReadStream(sourceReference, [source.bucket]);
+      try {
+        await this.writeStream(destination.reference, sourceStream, {
+          size: source.size,
+          sha256: source.sha256,
+          ...(source.contentType ? { contentType: source.contentType } : {}),
+        });
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+          throw error;
+        }
+        destinationAlreadyExisted = true;
+      }
+    }
+    const destinationInfo = await this.info(destination.reference, [destination.bucket]);
+    const sourceAfter = await this.info(sourceReference, [source.bucket]);
+    if (
+      sourceAfter.size !== source.size ||
+      sourceAfter.sha256 !== source.sha256 ||
+      destinationInfo.size !== source.size ||
+      destinationInfo.sha256 !== source.sha256
+    ) {
+      if (!destinationAlreadyExisted) {
+        await this.remove(destination.reference).catch(() => undefined);
+      }
+      throw new Error('Copied storage object failed size or checksum verification.');
+    }
+    return {
+      source: sourceAfter,
+      destination: destinationInfo,
+      destinationAlreadyExisted,
+    };
+  }
+
+  async remove(reference: string): Promise<void> {
+    if (!isCanonicalReference(reference)) {
+      await this.legacyLocalAdapter.remove(reference);
+      return;
+    }
+    const resolved = this.canonical(reference, ['uploads', 'exports', 'offline', 'ai', 'backups']);
+    if (!resolved) {
+      throw new Error('Storage reference is outside configured buckets.');
+    }
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.physicalBucket(resolved.bucket),
+        Key: this.remoteKey(resolved.key),
+      }),
+    );
+    await this.cacheAdapter.remove(resolved.reference).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+  }
+
+  async list(bucket: StorageBucket, prefix = ''): Promise<StorageListEntry[]> {
+    const normalizedPrefix = prefix ? safeStorageKey(prefix) : '';
+    const remotePrefix = this.remoteKey(normalizedPrefix);
+    const entries: StorageListEntry[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.physicalBucket(bucket),
+          Prefix: remotePrefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const object of page.Contents ?? []) {
+        if (!object.Key || object.Size === undefined) {
+          continue;
+        }
+        const configuredPrefix = this.options.prefix.replace(/^\/+|\/+$/g, '');
+        const key = configuredPrefix
+          ? object.Key.replace(
+              new RegExp(`^${configuredPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`),
+              '',
+            )
+          : object.Key;
+        let safeKey: string;
+        try {
+          safeKey = safeStorageKey(key);
+        } catch {
+          continue;
+        }
+        const reference = this.reference(bucket, safeKey);
+        const resolved = this.cacheAdapter.resolve(reference, [bucket]);
+        if (!resolved) {
+          continue;
+        }
+        entries.push({
+          bucket,
+          key: safeKey,
+          reference,
+          localPath: resolved.localPath,
+          kind: 'file',
+          size: object.Size,
+        });
+      }
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return entries.sort((left, right) => left.reference.localeCompare(right.reference));
+  }
+}
+
+const createStorageAdapter = (): StorageAdapter => {
+  if (process.env.STORAGE_DRIVER !== 's3') {
+    return new LocalStorageAdapter();
+  }
+  return new S3StorageAdapter({
+    endpoint: process.env.STORAGE_S3_ENDPOINT ?? '',
+    region: process.env.STORAGE_S3_REGION ?? '',
+    accessKeyId: process.env.STORAGE_S3_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.STORAGE_S3_SECRET_ACCESS_KEY ?? '',
+    forcePathStyle: process.env.STORAGE_S3_FORCE_PATH_STYLE !== 'false',
+    prefix: process.env.STORAGE_S3_PREFIX ?? 'terraleb',
+    tempDirectory: process.env.STORAGE_TEMP_DIR ?? '/tmp/terraleb-storage',
+    maxObjectBytes: Number(process.env.STORAGE_MAX_OBJECT_BYTES ?? 1024 * 1024 * 1024),
+    requestTimeoutMs: Number(process.env.STORAGE_S3_REQUEST_TIMEOUT_MS ?? 30000),
+    maxAttempts: Number(process.env.STORAGE_S3_MAX_ATTEMPTS ?? 3),
+    serverSideEncryption: 'AES256',
+    buckets: {
+      uploads: process.env.STORAGE_S3_UPLOADS_BUCKET ?? '',
+      exports: process.env.STORAGE_S3_EXPORTS_BUCKET ?? '',
+      offline: process.env.STORAGE_S3_OFFLINE_BUCKET ?? '',
+      ai: process.env.STORAGE_S3_AI_BUCKET ?? '',
+      backups: process.env.STORAGE_S3_BACKUPS_BUCKET ?? '',
+    },
+  });
+};
+
+const storageAdapter = createStorageAdapter();
 
 export {
   LocalStorageAdapter,
+  S3StorageAdapter,
+  createStorageAdapter,
   hashFile,
   storageAdapter,
   type StorageAdapter,
@@ -495,5 +1207,6 @@ export {
   type StorageListEntry,
   type StorageObjectInfo,
   type StorageObjectLocation,
+  type S3StorageAdapterOptions,
   type VerifiedCopyResult,
 };

@@ -679,6 +679,7 @@ class ApiAdminRepository implements AdminRepository {
     String? supportPhone,
     String? officeHours,
     String? helpText,
+    bool? hybridBasemapEnabled,
   }) async {
     return _run(() async {
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
@@ -688,6 +689,7 @@ class ApiAdminRepository implements AdminRepository {
           'support_phone': supportPhone,
           'office_hours': officeHours,
           'help_text': helpText,
+          'hybrid_basemap_enabled': ?hybridBasemapEnabled,
         },
       );
       final row = Map<String, dynamic>.from(
@@ -759,6 +761,7 @@ class ApiAdminRepository implements AdminRepository {
       supportPhone: row['support_phone'] as String?,
       officeHours: row['office_hours'] as String?,
       helpText: row['help_text'] as String?,
+      hybridBasemapEnabled: row['hybrid_basemap_enabled'] != false,
       updatedAt: _toDateTime(row['updated_at']),
     );
   }

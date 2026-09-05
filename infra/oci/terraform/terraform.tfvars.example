@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars locally. Never commit the populated file.
+tenancy_ocid             = "ocid1.tenancy.oc1..replace"
+compartment_ocid         = "ocid1.compartment.oc1..replace"
+operator_ssh_cidr        = "203.0.113.10/32"
+ssh_public_key           = "ssh-ed25519 replace-with-public-key-only"
+compute_image_ocid       = "ocid1.image.oc1.me-jeddah-1.replace"
+compute_architecture     = "amd64"
+monthly_budget_usd       = 200
+budget_alert_email       = "replace-with-verified-operations-email"

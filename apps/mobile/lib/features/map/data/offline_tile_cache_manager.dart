@@ -1,7 +1,11 @@
 import 'dart:io';
+import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -9,6 +13,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/offline/local_models.dart';
 import '../../../core/offline/local_store.dart';
 import '../domain/lebanon_map.dart';
@@ -59,6 +64,174 @@ class OfflineTileDownloadInterruptedException implements Exception {
   String toString() =>
       'Offline map download paused because the network connection was interrupted. Saved map images remain on this phone. Try again to resume.';
 }
+
+class OfflinePackageIntegrityException implements Exception {
+  const OfflinePackageIntegrityException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+({int tileCount, int uncompressedBytes}) _extractVerifiedOfflinePackage(
+  Map<String, Object?> input,
+) {
+  final archivePath = input['archivePath']! as String;
+  final outputPath = input['outputPath']! as String;
+  final packageVersion = input['packageVersion']! as String;
+  final expectedTileCount = input['tileCount']! as int;
+  final zoomMin = input['zoomMin']! as int;
+  final zoomMax = input['zoomMax']! as int;
+  final maximumUncompressedBytes = input['maximumUncompressedBytes']! as int;
+  final stream = InputFileStream(archivePath);
+  final archive = ZipDecoder().decodeStream(stream);
+  var tileCount = 0;
+  var uncompressedBytes = 0;
+  Map<String, dynamic>? manifest;
+  try {
+    for (final entry in archive) {
+      final name = entry.name;
+      final normalized = p.posix.normalize(name);
+      if (entry.isSymbolicLink ||
+          name.contains('\\') ||
+          p.posix.isAbsolute(name) ||
+          normalized != name ||
+          normalized.startsWith('../')) {
+        throw const OfflinePackageIntegrityException(
+          'The offline package contains an unsafe path.',
+        );
+      }
+      if (entry.isDirectory) continue;
+      if (name == 'manifest.json') {
+        if (entry.size > 256 * 1024 || manifest != null) {
+          throw const OfflinePackageIntegrityException(
+            'The offline package manifest is invalid.',
+          );
+        }
+        final decoded = jsonDecode(utf8.decode(entry.readBytes()!));
+        if (decoded is! Map) {
+          throw const OfflinePackageIntegrityException(
+            'The offline package manifest is invalid.',
+          );
+        }
+        manifest = Map<String, dynamic>.from(decoded);
+        continue;
+      }
+
+      final match = RegExp(
+        r'^tiles/(\d{1,2})/(\d+)/(\d+)\.tile$',
+      ).firstMatch(name);
+      if (match == null || entry.size < 8 || entry.size > 5 * 1024 * 1024) {
+        throw const OfflinePackageIntegrityException(
+          'The offline package contains an invalid tile entry.',
+        );
+      }
+      final z = int.parse(match.group(1)!);
+      final x = int.parse(match.group(2)!);
+      final y = int.parse(match.group(3)!);
+      final scale = 1 << z;
+      int longitudeToX(double longitude) =>
+          (((longitude + 180) / 360) * scale).floor();
+      int latitudeToY(double latitude) {
+        final radians = latitude * math.pi / 180;
+        return ((1 -
+                    math.log(math.tan(radians) + 1 / math.cos(radians)) /
+                        math.pi) /
+                2 *
+                scale)
+            .floor();
+      }
+
+      final minX = longitudeToX(35.094);
+      final maxX = longitudeToX(36.645);
+      final minY = latitudeToY(34.695);
+      final maxY = latitudeToY(33.045);
+      if (z < zoomMin ||
+          z > zoomMax ||
+          x < 0 ||
+          x >= scale ||
+          y < 0 ||
+          y >= scale ||
+          x < minX ||
+          x > maxX ||
+          y < minY ||
+          y > maxY) {
+        throw const OfflinePackageIntegrityException(
+          'The offline package contains invalid tile coordinates.',
+        );
+      }
+      tileCount += 1;
+      uncompressedBytes += entry.size;
+      if (tileCount > expectedTileCount ||
+          uncompressedBytes > maximumUncompressedBytes) {
+        throw const OfflinePackageIntegrityException(
+          'The offline package exceeds its reviewed limits.',
+        );
+      }
+      final relative = name.substring('tiles/'.length);
+      final destination = p.joinAll(<String>[
+        outputPath,
+        ...p.posix.split(relative),
+      ]);
+      final destinationFile = File(destination);
+      destinationFile.parent.createSync(recursive: true);
+      final output = OutputFileStream(destination, bufferSize: 256 * 1024);
+      try {
+        entry.writeContent(output, freeMemory: true);
+      } finally {
+        output.closeSync();
+      }
+      final signature = destinationFile.openSync()..setPositionSync(0);
+      try {
+        final header = signature.readSync(12);
+        final isPng =
+            header.length >= 8 &&
+            header[0] == 0x89 &&
+            header[1] == 0x50 &&
+            header[2] == 0x4e &&
+            header[3] == 0x47;
+        final isJpeg =
+            header.length >= 3 &&
+            header[0] == 0xff &&
+            header[1] == 0xd8 &&
+            header[2] == 0xff;
+        final isWebp =
+            header.length >= 12 &&
+            ascii.decode(header.sublist(0, 4), allowInvalid: true) == 'RIFF' &&
+            ascii.decode(header.sublist(8, 12), allowInvalid: true) == 'WEBP';
+        if (!isPng && !isJpeg && !isWebp) {
+          throw const OfflinePackageIntegrityException(
+            'The offline package contains an unsupported tile image.',
+          );
+        }
+      } finally {
+        signature.closeSync();
+      }
+    }
+  } finally {
+    archive.clear();
+    stream.closeSync();
+  }
+
+  if (tileCount != expectedTileCount ||
+      manifest?['schema_version'] != 1 ||
+      manifest?['package_version'] != packageVersion ||
+      manifest?['tile_count'] != expectedTileCount ||
+      manifest?['zoom_min'] != zoomMin ||
+      manifest?['zoom_max'] != zoomMax ||
+      manifest?['tile_scheme'] != 'xyz' ||
+      manifest?['dataset_code'] != 'copernicus_sentinel2_osm_labels') {
+    throw const OfflinePackageIntegrityException(
+      'The offline package manifest does not match the published metadata.',
+    );
+  }
+  return (tileCount: tileCount, uncompressedBytes: uncompressedBytes);
+}
+
+Future<({int tileCount, int uncompressedBytes})> _extractPackageInIsolate(
+  Map<String, Object?> input,
+) => Isolate.run(() => _extractVerifiedOfflinePackage(input));
 
 class OfflineBasemapLicenseRequiredException implements Exception {
   const OfflineBasemapLicenseRequiredException(this.message);
@@ -114,10 +287,11 @@ class OfflineDownloadCancelToken {
 class OfflineTileCacheManager {
   OfflineTileCacheManager({
     required LocalStore localStore,
+    ApiClient? apiClient,
+    Directory? rootDirectory,
     bool? licensedEsriOfflineBasemapEnabled,
-  }) : _licensedEsriOfflineBasemapEnabled =
-           licensedEsriOfflineBasemapEnabled ??
-           AppEnv.licensedEsriOfflineBasemapEnabled,
+  }) : _apiClient = apiClient,
+       _rootDir = rootDirectory,
        _localStore = localStore,
        _dio = Dio(
          BaseOptions(
@@ -129,11 +303,8 @@ class OfflineTileCacheManager {
        );
 
   final LocalStore _localStore;
+  final ApiClient? _apiClient;
   final Dio _dio;
-  final bool _licensedEsriOfflineBasemapEnabled;
-
-  bool get licensedEsriOfflineBasemapEnabled =>
-      _licensedEsriOfflineBasemapEnabled;
   static const int _tileDownloadConcurrency = 8;
   static const int _tileNetworkFailureAbortThreshold =
       _tileDownloadConcurrency * 3;
@@ -147,8 +318,10 @@ class OfflineTileCacheManager {
       return;
     }
 
-    final appDir = await getApplicationDocumentsDirectory();
-    final root = Directory(p.join(appDir.path, 'offline_tiles'));
+    final appDir = _rootDir == null
+        ? await getApplicationDocumentsDirectory()
+        : null;
+    final root = _rootDir ?? Directory(p.join(appDir!.path, 'offline_tiles'));
     await root.create(recursive: true);
     final transparent = File(p.join(root.path, 'transparent.png'));
     if (!await transparent.exists()) {
@@ -202,6 +375,9 @@ class OfflineTileCacheManager {
   int expectedLebanonContributionTileCount({
     required OfflineMapPackage package,
   }) {
+    if (package.isProviderNeutralPackageReady && (package.tileCount ?? 0) > 0) {
+      return package.tileCount!;
+    }
     final minZoom = _contributionMinZoom(package);
     final maxZoom = _contributionMaxZoom(package);
     return _countTilesForBounds(
@@ -224,7 +400,8 @@ class OfflineTileCacheManager {
       package: package,
       basemapStyle: basemapStyle,
     );
-    return actual >= expected;
+    return actual == expected &&
+        await _packageMarkerMatches(package, basemapStyle);
   }
 
   Future<OfflineTileDownloadSummary> cacheLebanonOverview({
@@ -250,14 +427,15 @@ class OfflineTileCacheManager {
     void Function(OfflineTileDownloadProgress progress)? onProgress,
     OfflineDownloadCancelToken? cancelToken,
   }) async {
-    final minZoom = _contributionMinZoom(package);
-    final maxZoom = _contributionMaxZoom(package);
-    return cacheRegion(
+    if (basemapStyle != LebanonBasemapStyle.satellite ||
+        !package.isProviderNeutralPackageReady) {
+      throw const OfflineBasemapLicenseRequiredException(
+        'No verified TerraLeb offline imagery package is currently available.',
+      );
+    }
+    return _downloadProviderNeutralPackage(
       package: package,
       basemapStyle: basemapStyle,
-      bounds: LebanonMapConfig.bounds,
-      minZoom: minZoom,
-      maxZoom: math.max(minZoom, maxZoom),
       onProgress: onProgress,
       cancelToken: cancelToken,
     );
@@ -497,15 +675,259 @@ class OfflineTileCacheManager {
   }
 
   void _assertOfflineDownloadLicensed(LebanonBasemapStyle basemapStyle) {
-    if (basemapStyle == LebanonBasemapStyle.street) {
-      throw const OfflineBasemapLicenseRequiredException(
-        'Bulk offline download from the public OpenStreetMap tile service is disabled. Use an organization-owned or explicitly licensed offline tile source.',
+    throw const OfflineBasemapLicenseRequiredException(
+      'Direct provider tile downloads are disabled. Use the verified TerraLeb offline package.',
+    );
+  }
+
+  Future<OfflineTileDownloadSummary> _downloadProviderNeutralPackage({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+    void Function(OfflineTileDownloadProgress progress)? onProgress,
+    OfflineDownloadCancelToken? cancelToken,
+  }) async {
+    final apiClient = _apiClient;
+    final expectedSize = package.artifactSizeBytes ?? package.sizeBytes;
+    final expectedTiles = package.tileCount;
+    final expectedSha256 = package.artifactSha256?.toLowerCase();
+    final downloadPath = package.downloadPath;
+    if (apiClient == null ||
+        expectedSize == null ||
+        expectedSize <= 0 ||
+        expectedSize > 5 * 1024 * 1024 * 1024 ||
+        expectedTiles == null ||
+        expectedTiles <= 0 ||
+        expectedSha256 == null ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedSha256) ||
+        downloadPath == null ||
+        !downloadPath.startsWith('/offline-map/')) {
+      throw const OfflinePackageIntegrityException(
+        'The published offline package metadata is incomplete.',
       );
     }
-    if (!_licensedEsriOfflineBasemapEnabled) {
-      throw const OfflineBasemapLicenseRequiredException(
-        'Satellite basemap download is disabled until documented offline-use rights are approved and LICENSED_ESRI_OFFLINE_BASEMAP_ENABLED is enabled.',
+    await initialize();
+    cancelToken?.throwIfCanceled();
+    final ownerSegment = _safeFileSegment(package.ownerUserId, 'account');
+    final versionSegment = _safeFileSegment(package.version, 'package version');
+    final activeDirectory = _scopedStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    final stagingDirectory = Directory('${activeDirectory.path}.staging');
+    final backupDirectory = Directory('${activeDirectory.path}.backup');
+    final downloadDirectory = Directory(
+      p.join(_rootDir!.path, ownerSegment, '.packages'),
+    );
+    final partialFile = File(
+      p.join(
+        downloadDirectory.path,
+        '$versionSegment-$expectedSha256.zip.partial',
+      ),
+    );
+    await downloadDirectory.create(recursive: true);
+
+    if (await backupDirectory.exists() && !await activeDirectory.exists()) {
+      await backupDirectory.rename(activeDirectory.path);
+    } else if (await backupDirectory.exists()) {
+      await backupDirectory.delete(recursive: true);
+    }
+    if (await _packageMarkerMatches(package, basemapStyle)) {
+      return OfflineTileDownloadSummary(
+        requestedTiles: expectedTiles,
+        downloadedTiles: 0,
+        skippedTiles: expectedTiles,
+        failedTiles: 0,
+        sizeBytes: expectedSize,
       );
+    }
+
+    var existingBytes = await partialFile.exists()
+        ? await partialFile.length()
+        : 0;
+    if (existingBytes > expectedSize) {
+      await partialFile.delete();
+      existingBytes = 0;
+    }
+
+    Future<Response<dynamic>> downloadFrom(int offset) async {
+      final dioCancelToken = cancelToken?.attachDioToken();
+      try {
+        return await apiClient.dio.download(
+          '${AppEnv.apiVersionPrefix}$downloadPath',
+          partialFile.path,
+          deleteOnError: false,
+          cancelToken: dioCancelToken,
+          options: Options(
+            headers: <String, dynamic>{
+              if (offset > 0) 'Range': 'bytes=$offset-',
+            },
+          ),
+          fileAccessMode: offset > 0
+              ? FileAccessMode.append
+              : FileAccessMode.write,
+          onReceiveProgress: (received, total) {
+            final completedBytes = (offset + received).clamp(0, expectedSize);
+            final approximateTiles =
+                ((completedBytes / expectedSize) * expectedTiles).floor();
+            onProgress?.call(
+              OfflineTileDownloadProgress(
+                requestedTiles: expectedTiles,
+                completedTiles: approximateTiles.clamp(0, expectedTiles),
+                downloadedTiles: approximateTiles.clamp(0, expectedTiles),
+                skippedTiles: 0,
+                failedTiles: 0,
+              ),
+            );
+          },
+        );
+      } finally {
+        if (dioCancelToken != null) cancelToken?.detachDioToken(dioCancelToken);
+      }
+    }
+
+    try {
+      if (existingBytes < expectedSize) {
+        cancelToken?.throwIfCanceled();
+        var response = await downloadFrom(existingBytes);
+        if (existingBytes > 0 && response.statusCode != 206) {
+          await partialFile.delete();
+          existingBytes = 0;
+          response = await downloadFrom(0);
+        }
+        if (response.statusCode != 200 && response.statusCode != 206) {
+          throw const OfflineTileDownloadInterruptedException();
+        }
+      }
+      cancelToken?.throwIfCanceled();
+      if (!await partialFile.exists() ||
+          await partialFile.length() != expectedSize) {
+        throw const OfflineTileDownloadInterruptedException();
+      }
+      final actualSha256 = (await sha256.bind(partialFile.openRead()).first)
+          .toString();
+      if (actualSha256 != expectedSha256) {
+        await partialFile.delete();
+        throw const OfflinePackageIntegrityException(
+          'The downloaded offline package failed checksum validation.',
+        );
+      }
+
+      if (await stagingDirectory.exists()) {
+        await stagingDirectory.delete(recursive: true);
+      }
+      await stagingDirectory.create(recursive: true);
+      final extractionInput = <String, Object?>{
+        'archivePath': partialFile.path,
+        'outputPath': stagingDirectory.path,
+        'packageVersion': package.version,
+        'tileCount': expectedTiles,
+        'zoomMin': package.zoomLevelMin,
+        'zoomMax': package.zoomLevelMax,
+        'maximumUncompressedBytes': math.min(
+          20 * 1024 * 1024 * 1024,
+          math.max(expectedSize * 3, expectedSize + 256 * 1024 * 1024),
+        ),
+      };
+      final extraction = await _extractPackageInIsolate(extractionInput);
+      await File(p.join(stagingDirectory.path, '.package.json')).writeAsString(
+        jsonEncode(<String, Object?>{
+          'schema_version': 1,
+          'owner_user_id': package.ownerUserId,
+          'package_version': package.version,
+          'artifact_sha256': expectedSha256,
+          'tile_count': extraction.tileCount,
+          'uncompressed_bytes': extraction.uncompressedBytes,
+        }),
+        flush: true,
+      );
+
+      if (await activeDirectory.exists()) {
+        await activeDirectory.rename(backupDirectory.path);
+      }
+      try {
+        await stagingDirectory.rename(activeDirectory.path);
+      } catch (_) {
+        if (!await activeDirectory.exists() && await backupDirectory.exists()) {
+          await backupDirectory.rename(activeDirectory.path);
+        }
+        rethrow;
+      }
+      if (await backupDirectory.exists()) {
+        await backupDirectory.delete(recursive: true);
+      }
+      await partialFile.delete();
+      onProgress?.call(
+        OfflineTileDownloadProgress(
+          requestedTiles: expectedTiles,
+          completedTiles: expectedTiles,
+          downloadedTiles: expectedTiles,
+          skippedTiles: 0,
+          failedTiles: 0,
+        ),
+      );
+      await _localStore.upsertOfflineMapPackage(
+        package.copyWith(
+          downloadedAt: DateTime.now(),
+          tileCount: expectedTiles,
+          artifactSizeBytes: expectedSize,
+        ),
+      );
+      return OfflineTileDownloadSummary(
+        requestedTiles: expectedTiles,
+        downloadedTiles: expectedTiles,
+        skippedTiles: 0,
+        failedTiles: 0,
+        sizeBytes: expectedSize,
+      );
+    } on DioException catch (error) {
+      if (error.type == DioExceptionType.cancel) {
+        throw const OfflineDownloadCanceledException();
+      }
+      throw const OfflineTileDownloadInterruptedException();
+    } on OfflinePackageIntegrityException {
+      if (await stagingDirectory.exists()) {
+        try {
+          await stagingDirectory.delete(recursive: true);
+        } catch (_) {}
+      }
+      if (await partialFile.exists()) {
+        try {
+          await partialFile.delete();
+        } catch (_) {}
+      }
+      rethrow;
+    } on FileSystemException {
+      if (await stagingDirectory.exists()) {
+        try {
+          await stagingDirectory.delete(recursive: true);
+        } catch (_) {}
+      }
+      throw StateError(
+        'The offline package could not be saved. Free device storage and try again.',
+      );
+    }
+  }
+
+  Future<bool> _packageMarkerMatches(
+    OfflineMapPackage package,
+    LebanonBasemapStyle basemapStyle,
+  ) async {
+    if (!package.isProviderNeutralPackageReady) return false;
+    final directory = _scopedStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    final marker = File(p.join(directory.path, '.package.json'));
+    if (!await marker.exists()) return false;
+    try {
+      final decoded = jsonDecode(await marker.readAsString());
+      return decoded is Map &&
+          decoded['owner_user_id'] == package.ownerUserId &&
+          decoded['package_version'] == package.version &&
+          decoded['artifact_sha256'] == package.artifactSha256 &&
+          decoded['tile_count'] == package.tileCount;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -533,7 +955,7 @@ class OfflineTileCacheManager {
     var tileCount = 0;
     var totalSize = 0;
     await for (final entity in dir.list(recursive: true)) {
-      if (entity is! File) {
+      if (entity is! File || !entity.path.endsWith('.tile')) {
         continue;
       }
       tileCount += 1;
@@ -761,13 +1183,15 @@ class OfflineTileCacheManager {
     required OfflineMapPackage package,
     required LebanonBasemapStyle basemapStyle,
   }) {
-    final ownerSegment = package.ownerUserId.trim();
+    final ownerSegment = package.ownerUserId.trim().isEmpty
+        ? ''
+        : _safeFileSegment(package.ownerUserId, 'account');
     final segments = <String>[_rootDir!.path];
     if (ownerSegment.isNotEmpty) {
       segments.add(ownerSegment);
     }
     segments
-      ..add(package.version)
+      ..add(_safeFileSegment(package.version, 'package version'))
       ..add(basemapStyle.name);
     return Directory(p.joinAll(segments));
   }
@@ -777,8 +1201,20 @@ class OfflineTileCacheManager {
     required LebanonBasemapStyle basemapStyle,
   }) {
     return Directory(
-      p.join(_rootDir!.path, package.version, basemapStyle.name),
+      p.join(
+        _rootDir!.path,
+        _safeFileSegment(package.version, 'package version'),
+        basemapStyle.name,
+      ),
     );
+  }
+
+  String _safeFileSegment(String value, String label) {
+    final normalized = value.trim();
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(normalized)) {
+      throw OfflinePackageIntegrityException('The offline $label is invalid.');
+    }
+    return normalized;
   }
 
   LatLngBounds _clampBounds(LatLngBounds bounds) {

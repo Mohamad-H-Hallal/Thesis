@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
 import type { NextFunction, Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError, permanentOfflineSyncError } = require('../middleware/error');
@@ -186,10 +187,7 @@ const uploadPhotos = async (req: Request, res: Response): Promise<void> => {
     return {
       ...photo,
       photoId,
-      photoPath: storageAdapter.reference(
-        'uploads',
-        `.private/feature-photos/.${photoId}.jpg`,
-      ),
+      photoPath: storageAdapter.reference('uploads', `.private/feature-photos/.${photoId}.jpg`),
       thumbnailPath: storageAdapter.reference(
         'uploads',
         `.private/feature-thumbnails/.${photoId}.jpg`,
@@ -535,9 +533,13 @@ const getPhoto = async (req, res) => {
     });
     throw new AppError('Photo file is unavailable', 404);
   }
-  let storedPhoto: Awaited<ReturnType<typeof storageAdapter.locate>>;
+  let storedPhoto: Awaited<ReturnType<typeof storageAdapter.info>>;
+  let photoStream: Awaited<ReturnType<typeof storageAdapter.openReadStream>>;
   try {
-    storedPhoto = await storageAdapter.locate(filePath, ['uploads']);
+    [storedPhoto, photoStream] = await Promise.all([
+      storageAdapter.info(filePath, ['uploads']),
+      storageAdapter.openReadStream(filePath, ['uploads']),
+    ]);
   } catch (error: unknown) {
     logger.error('Photo file failed managed-storage verification', {
       photoId,
@@ -551,9 +553,11 @@ const getPhoto = async (req, res) => {
   res.set({
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
+    'Content-Type': storedPhoto.contentType ?? 'image/jpeg',
+    'Content-Length': String(storedPhoto.size),
     'Content-Disposition': `inline; filename="${photoId}${thumbnail === 'true' ? '-thumbnail' : ''}.jpg"`,
   });
-  res.sendFile(storedPhoto.localPath, { dotfiles: 'allow' });
+  await pipeline(photoStream, res);
 };
 
 // Delete photo

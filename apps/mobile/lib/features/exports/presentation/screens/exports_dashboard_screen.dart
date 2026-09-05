@@ -399,6 +399,7 @@ class _ExportsDashboardScreenState
                         DropdownButtonFormField<String?>(
                           initialValue: _selectedProjectId,
                           isExpanded: true,
+                          itemHeight: null,
                           decoration: const InputDecoration(
                             labelText: 'Project',
                           ),
@@ -410,9 +411,11 @@ class _ExportsDashboardScreenState
                             ...availableProjects.map(
                               (project) => DropdownMenuItem<String?>(
                                 value: project.id,
-                                child: Text(
-                                  project.name,
-                                  overflow: TextOverflow.ellipsis,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                  ),
+                                  child: Text(project.name, softWrap: true),
                                 ),
                               ),
                             ),
@@ -1234,7 +1237,7 @@ Future<Map<String, dynamic>?> openExportAreaPicker(
   );
 }
 
-class _ExportAreaPickerDialog extends StatefulWidget {
+class _ExportAreaPickerDialog extends ConsumerStatefulWidget {
   const _ExportAreaPickerDialog({
     this.initialPolygon,
     this.validateWorkspace = true,
@@ -1248,11 +1251,12 @@ class _ExportAreaPickerDialog extends StatefulWidget {
   final String submitLabel;
 
   @override
-  State<_ExportAreaPickerDialog> createState() =>
+  ConsumerState<_ExportAreaPickerDialog> createState() =>
       _ExportAreaPickerDialogState();
 }
 
-class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
+class _ExportAreaPickerDialogState
+    extends ConsumerState<_ExportAreaPickerDialog> {
   late final MapController _mapController;
   late final MapOptions _mapOptions;
   late final TileProvider _tileProvider;
@@ -1271,7 +1275,9 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
   void initState() {
     super.initState();
     _mapController = MapController();
-    _tileProvider = appNetworkTileProvider();
+    _tileProvider = appNetworkTileProvider(
+      apiClient: ref.read(apiClientProvider),
+    );
     _mapOptions = MapOptions(
       initialCenter: LebanonMapConfig.center,
       initialZoom: LebanonMapConfig.drawingInitialZoom,
@@ -1459,6 +1465,9 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
                               'export_area_basemap_${_basemapStyle.name}',
                             ),
                             urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                              _basemapStyle,
+                            ),
+                            fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(
                               _basemapStyle,
                             ),
                             tileProvider: _tileProvider,

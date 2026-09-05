@@ -50,6 +50,7 @@
     "ai:worker:bridge-once": "tsx src/jobs/runAiWorkerOnce.ts --once --pipeline-bridge",
     "notifications:run": "tsx src/jobs/runNotificationMaintenance.ts",
     "workloads:worker": "tsx src/jobs/runWorkloadWorker.ts",
+    "offline-map:publish": "tsx src/jobs/publishOfflineMapPackage.ts",
     "phase11:staging": "npm run migrate && npm run seed:staging && npm run staging:verify",
     "release:gate": "npm run legal:readiness:check && npm run production:config:check && npm run openapi:check && npm run lint && npm run typecheck && npm run database:full-chain:check && npm run test:ci && npm run test:perf && npm run audit:prod",
     "migrate:prod": "node dist/db/migrate.js"
@@ -64,9 +65,11 @@
   "author": "Ibrahim",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1118.0",
     "@mapbox/shp-write": "^0.4.3",
+    "@smithy/node-http-handler": "4.11.3",
     "@tmcw/togeojson": "^7.1.2",
-    "@xmldom/xmldom": "^0.9.10",
+    "@xmldom/xmldom": "^0.9.12",
     "adm-zip": "^0.6.0",
     "bcryptjs": "^3.0.3",
     "compression": "^1.7.4",
@@ -98,6 +101,8 @@
   },
   "overrides": {
     "path-to-regexp": "0.1.13",
+    "qs": "6.16.0",
+    "fast-uri": "3.1.7",
     "lodash": "4.18.1",
     "@tootallnate/once": "3.0.1",
     "protobufjs": "7.6.5",

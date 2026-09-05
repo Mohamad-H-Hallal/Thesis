@@ -5,68 +5,69 @@
       "type": "privacy",
       "slug": "privacy",
       "locale": "en",
-      "version": "draft-2026-08-12",
-      "title": "TerraLeb Privacy Notice: Legal Review Draft",
+      "version": "draft-owner-2026-09-05",
+      "title": "TerraLeb Privacy Notice",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
-      "summary": "This engineering draft describes current technical processing. It is not approved for public production.",
+      "summary": "Owner-reviewed Lebanon v1 draft. Production serves it only after verified operator details and counsel approval are attached to this exact text.",
       "sections": [
-        {"heading": "Who operates TerraLeb", "paragraphs": ["[DECISION REQUIRED: legal operator/controller name, address, jurisdiction and privacy contact]."], "bullets": []},
+        {"heading": "Who operates TerraLeb", "paragraphs": ["TerraLeb is intended for a Lebanon-based operator. The verified legal name, legal form or authority, serviceable address, monitored privacy contact and accountable owner must be inserted from the signed release record before this notice can be published in production. TerraLeb does not attribute this role to NCRS, CNRS, a ministry, municipality, company or individual without evidence."], "bullets": []},
         {"heading": "Data processed", "paragraphs": ["TerraLeb can process account/contact information, roles and assignments, precise GIS geometry and accuracy, field photos, form attributes, comments/reviews, imports/exports, AI run and validation records, notifications/device tokens, sessions, and security/audit records."], "bullets": []},
-        {"heading": "Purposes and legal basis", "paragraphs": ["Current technical purposes include secure account access, authorized project administration, field collection, review, synchronization, import/export, optional notifications and reviewed AI-assisted mapping."], "bullets": ["[DECISION REQUIRED: lawful basis and mandatory/optional status for each purpose].", "Private contributions are not authorized for unrelated AI training by this draft."]},
-        {"heading": "Recipients and transfers", "paragraphs": ["Depending on approved production configuration, recipients can include authorized project staff, hosting/storage/backup operators, email or phone verification providers, Firebase Cloud Messaging, map providers and the separately operated AI service."], "bullets": ["[DECISION REQUIRED: actual vendor legal entities, regions, contracts and transfer safeguards]."]},
-        {"heading": "Retention and rights", "paragraphs": ["Users can submit access/export, correction, restriction/objection and deletion requests. Deactivation is not deletion. If approved institutional-record rules require contribution history to remain, direct account identifiers are erased and retained attribution uses a pseudonymous masked label. A masked label is not legal anonymity."], "bullets": ["[DECISION REQUIRED: record basis, exact retained fields, visibility, category retention, legal holds, backup expiry and applicable exceptions]."]},
-        {"heading": "Security and contact", "paragraphs": ["TerraLeb uses role-based access, session controls, private media routes, encrypted owner-scoped offline storage, audit controls and protected transport in production. No system can guarantee absolute security."], "bullets": ["[DECISION REQUIRED: public privacy contact and regulator/complaint wording]."]}
+        {"heading": "Purposes and choices", "paragraphs": ["Required service processing protects accounts, enforces roles and project visibility, operates assigned institutional workflows, and records necessary security and audit evidence. Precise geometry, photos, comments, imports, exports and offline storage occur only when an authorized user deliberately uses those features. Push notifications are optional. Public publication requires a separate project authority decision."], "bullets": ["AI is disabled for every project by default and is controlled by the protected super administrator. Its inputs are approved project GIS data and imagery, not account profiles, contact details, credentials, sessions, device tokens, notifications, unrelated projects or private drafts.", "General, unrelated or cross-project AI training is prohibited in v1.", "The final notice must state the counsel-approved legal basis for each active purpose; this owner draft does not label every purpose as consent."]},
+        {"heading": "Recipients and locations", "paragraphs": ["Authorized project personnel receive only data permitted by their role. The selected hosting target is OCI Saudi Arabia West (Jeddah). Conditional providers are a contracted SMTP service, Firebase Cloud Messaging, ArcGIS online maps and an approved Earth Engine plan. Their exact contracting entities, regions, terms and safeguards will be published only after the operator activates and verifies them."], "bullets": ["Phone numbers are format-validated only; no SMS provider is used in v1.", "No advertising or behavioral analytics SDK is used in v1.", "Map providers can receive requested tile coordinates, IP/network and client metadata; displaying a basemap does not upload a user's account profile to the map provider."]},
+        {"heading": "Retention and deletion", "paragraphs": ["The owner schedule uses short operational retention, including 24 hours for encrypted personal-data export artifacts, 7 days for ordinary project export files, 30 days for routine logs and temporary imports, 35 days for backups, 90 days for inactive drafts or rejected/private photos, and 180 days for notifications. Accepted institutional GIS and minimum provenance may remain through the active project and for the approved review period described in the current retention register."], "bullets": ["Deactivation is not deletion.", "Completed deletion erases credentials, contact and private account data, sessions, device tokens, drafts and pending or unapproved content. Accepted GIS and minimum approved institutional provenance can remain under a pseudonymous masked label for authorized users; public output uses Contributor. A masked label is not legal anonymity.", "Backups expire naturally and a deletion ledger prevents erased identities from being restored into active state. A legal hold is disabled unless a specific protected, expiring and audited hold is approved."]},
+        {"heading": "Your choices and requests", "paragraphs": ["Users can request a copy of their personal data, correction, restriction or objection review, and reviewed account deletion from the app. Requests are authenticated, rate-limited, tracked and visible to the requester. A public deletion-request route does not reveal whether an account exists."], "bullets": ["Permission for camera, photos and notifications is requested contextually when the related feature is used.", "Disabling push notifications does not disable authenticated in-app notifications.", "The verified public privacy contact and applicable complaint route must be inserted before production publication."]},
+        {"heading": "Security", "paragraphs": ["TerraLeb uses role-based access, session controls, private media routes, encrypted owner-scoped offline storage, audit controls, private object storage and protected transport in production. No system can guarantee absolute security."], "bullets": []}
       ]
     },
     {
       "type": "terms",
       "slug": "terms",
       "locale": "en",
-      "version": "draft-2026-08-13",
-      "title": "TerraLeb Terms of Use: Legal Review Draft",
+      "version": "draft-owner-2026-09-05",
+      "title": "TerraLeb Terms of Use",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
       "requiresRenewedAcceptance": true,
-      "summary": "These draft terms are not approved for public production and do not create invented legal rights.",
+      "summary": "Owner-reviewed terms for Lebanon v1. Verified operator facts and counsel approval are required before production publication.",
       "sections": [
-        {"heading": "Operator, eligibility and accounts", "paragraphs": ["[OWNER DECISION, COUNSEL APPROVAL REQUIRED: TerraLeb is intended to be offered and targeted only in Lebanon. DECISION REQUIRED: contracting operator, minimum age, governing law and dispute process]. Users must provide accurate account information, protect credentials and use only authorized roles/projects."], "bullets": []},
-        {"heading": "Field work and contributed content", "paragraphs": ["Users must have authority to enter property, collect locations, take or upload photos, import third-party data and share or publish it."], "bullets": ["[DECISION REQUIRED: ownership and the limited license needed to host, process, review, export and publish contributions].", "AI training and public publication require separately approved authority; they are not implied by this draft."]},
+        {"heading": "Eligibility and accounts", "paragraphs": ["TerraLeb v1 is offered and targeted in Lebanon to users aged 18 or older. Minors may not create or use accounts. Users must provide accurate account information, protect credentials, and use only roles and projects they are authorized to access. The verified operator identity, governing-law and dispute wording will be inserted only from the signed release record."], "bullets": []},
+        {"heading": "Field work and contributed content", "paragraphs": ["Users must have authority to enter property, collect locations, take or upload photos, import third-party data and share it with the assigned project. Users must provide source, licence, attribution, accuracy and redistribution information when required."], "bullets": ["A contributor keeps rights they actually hold and grants the operator and responsible project institution the non-exclusive rights needed to receive, store, secure, validate, transform for GIS interoperability, review, use in the approved project AI workflow, back up and export accepted contributions.", "Publication requires a separate institutional authority and protected-super-admin decision. Signup acceptance does not authorize public publication.", "The operational permission for an accepted official record survives deletion only for the approved retention period. TerraLeb does not claim ownership of third-party or institutional data merely because it was uploaded."]},
         {"heading": "Review, accuracy and service limitations", "paragraphs": ["Submissions, imports, exports and AI-derived layers may require review. Offline data can be stale and synchronization can conflict. Users must verify critical decisions against authoritative sources."], "bullets": []},
-        {"heading": "Suspension, deactivation and deletion", "paragraphs": ["Security and project rules can restrict access. User deactivation is reversible and distinct from a verified deletion request. Contributors may initiate a request while assignments or reviews remain, but fulfillment waits until those responsibilities are resolved. The proposed deletion design erases credentials and contact details while justified institutional records retain only a pseudonymous masked contributor label. These draft Terms do not establish the legal basis, retention period, or visibility for retained records."], "bullets": []},
-        {"heading": "Liability and changes", "paragraphs": ["[DECISION REQUIRED: enforceable warranty, liability, indemnity, mandatory-right carve-outs, notice of changes and contact/takedown process]."], "bullets": []}
+        {"heading": "Suspension, deactivation and deletion", "paragraphs": ["Security and project rules can restrict access. Contributor deactivation is reversible and distinct from deletion. Every role except the protected super administrator may submit a reviewed deletion request. A protected administrator may explicitly discard unfinished work and release or transfer responsibilities. Completed deletion erases direct identifiers, credentials, private data, drafts and pending or unapproved records; accepted GIS and minimum institutional provenance may remain for the approved period under masked internal attribution, while public output uses Contributor."], "bullets": []},
+        {"heading": "Availability, responsibility and changes", "paragraphs": ["TerraLeb is provided for authorized project work and may be interrupted for maintenance, security, provider outages or legal requirements. It does not guarantee cadastral, survey, emergency-navigation, GPS, imagery or AI accuracy. Users must verify critical decisions with an authoritative source."], "bullets": ["Nothing in the final Terms may exclude liability or rights that applicable law does not permit the operator to exclude.", "Users remain responsible for lawful field access, photography, source rights and compliance with project instructions.", "Material Terms or Acceptable Use changes require a new affirmative acceptance. The intended owner notice is 30 days where practical; urgent security or legal changes may take effect sooner with a clear notice.", "Reports and takedown requests use the in-app workflow or verified public contact. Final warranty, limitation, indemnity, governing-law and dispute clauses require counsel approval before publication."]}
       ]
     },
     {
       "type": "acceptable_use",
       "slug": "acceptable-use",
       "locale": "en",
-      "version": "draft-2026-08-12",
-      "title": "TerraLeb Acceptable Use: Legal Review Draft",
+      "version": "draft-owner-2026-09-05",
+      "title": "TerraLeb Acceptable Use Policy",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
       "requiresRenewedAcceptance": true,
-      "summary": "Baseline safety rules for review; final moderation authority and appeals require owner approval.",
+      "summary": "Owner-reviewed safety and content rules for the Lebanon v1 release; final counsel approval is required.",
       "sections": [
         {"heading": "Prohibited conduct", "paragraphs": ["Do not bypass authorization, interfere with the service, upload malware, harass people, impersonate others, scrape protected data, or use TerraLeb for unlawful surveillance or discrimination."], "bullets": []},
         {"heading": "Content and location safety", "paragraphs": ["Do not upload unlawful, abusive, deceptive, infringing or unnecessary personal content. Do not publish sensitive sites, private-property details, faces or identifying evidence without authority."], "bullets": []},
         {"heading": "Data and map sources", "paragraphs": ["Do not import, export or redistribute data without the required rights, attribution and restrictions. Do not use TerraLeb to evade map-provider limits or licenses."], "bullets": []},
-        {"heading": "Reporting and enforcement", "paragraphs": ["Use the approved support/report channel for harmful or unauthorized material."], "bullets": ["[DECISION REQUIRED: moderation owner, response targets, appeal and emergency process]."]}
+        {"heading": "Reporting and enforcement", "paragraphs": ["Use Report project content or the verified public support channel for harmful, unlawful, infringing or unauthorized material. A report does not automatically hide or delete content."], "bullets": ["The protected moderation queue records the original report, status, responsible administrator, action and response.", "TerraLeb targets an initial review within 10 calendar days and expedites credible safety, security or unlawful-disclosure reports.", "Actions use existing authoritative correction, restriction, unpublication and escalation workflows. A user may request further review through the same tracked case or verified support channel.", "The final operator must publish an emergency/escalation route; TerraLeb is not an emergency service."]}
       ]
     },
     {
       "type": "important_notices",
       "slug": "important-notices",
       "locale": "en",
-      "version": "draft-2026-08-12",
+      "version": "draft-owner-2026-09-05",
       "title": "TerraLeb Important GIS and AI Notices",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
-      "summary": "Safety and accuracy notices that must accompany final approved terms and workflows.",
+      "summary": "Owner-reviewed field, map and AI safety notices; final counsel approval is required before production publication.",
       "sections": [
         {"heading": "Not an authoritative boundary or survey", "paragraphs": ["TerraLeb maps, geometries and measurements are not cadastral records, land-title evidence, legal boundaries or a professional survey unless an authorized body explicitly certifies a named output."], "bullets": []},
         {"heading": "Not emergency navigation", "paragraphs": ["Do not rely on TerraLeb for emergency response, personal safety, navigation or other time-critical decisions."], "bullets": []},
@@ -79,42 +80,43 @@
       "type": "account_deletion",
       "slug": "account-deletion",
       "locale": "en",
-      "version": "draft-2026-08-13",
+      "version": "draft-owner-2026-09-05",
       "title": "Request TerraLeb Account Deletion",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
-      "summary": "Authenticated non-protected-super-admin users can initiate and track a reviewed deletion request from Profile. Production execution remains subject to approved deletion and retention rules.",
+      "summary": "Every user except the protected super administrator can initiate and track a reviewed deletion request. Production execution remains fail-closed until the approved policy evidence is configured.",
       "sections": [
         {"heading": "How to request deletion", "paragraphs": ["Sign in, open Profile, find Account access, choose Request account deletion, review the notice and confirm with your current password. Every role except the protected super administrator can initiate a request. If you cannot sign in, use /legal/account-deletion/request; that public form does not confirm whether an account exists and requires identity verification before action. The approved privacy contact must also be published before release."], "bullets": []},
-        {"heading": "Contributor responsibilities", "paragraphs": ["A contributor may submit a deletion request at any time, but deletion cannot be completed while any pending or approved project assignment remains or any submitted contribution remains pending review. The request remains a tracked privacy request while an administrator resolves those responsibilities."], "bullets": []},
-        {"heading": "What happens", "paragraphs": ["A request is identity-verified, tracked and reviewed. Deactivation is not deletion. The proposed execution removes credentials, sessions, contact details, private profile data and unnecessary private drafts. Justified contribution and decision records can retain their internal relationship to a permanently non-authenticatable account and display a pseudonymous masked label such as A. H. The full name is not kept to recreate that label, and the label is not legal anonymity."], "bullets": ["[DECISION REQUIRED: privacy contact, grace period, record basis, exact deleted and retained fields, masked-label visibility, retention periods, photos/location/free-text treatment, backup ageing, exceptions and completion notice]."]}
+        {"heading": "Review and responsibilities", "paragraphs": ["A contributor or administrator may submit a request at any time. The protected administrator reviews assignments, queued work and institutional responsibilities. The administrator must explicitly choose whether unfinished work is resolved or permanently discarded and whether responsibilities are released or transferred. No destructive choice is preselected. The user may cancel while the request is pending verification, submitted or in review, but not after it is scheduled or processing."], "bullets": []},
+        {"heading": "What is deleted", "paragraphs": ["Completed deletion removes the password and credentials, email, phone, verification/recovery state, sessions, device tokens, notification destinations, private profile fields, the affected owner's local account cache, personal export artifacts, drafts, pending/unapproved work and unnecessary attachments. The account becomes permanently non-authenticatable and cannot be reactivated."], "bullets": []},
+        {"heading": "What may remain", "paragraphs": ["Accepted GIS and only the minimum approved review, source, import, publication or AI-validation provenance needed for institutional integrity may remain for the retention period. Internal attribution uses a one-time Unicode-safe pseudonymous masked label such as A. H. for authorized users; public/general output uses Contributor. The full name is not retained to recreate the label, and internal UUIDs are not public identifiers."], "bullets": ["Rejected/private photos are deleted after their shorter period. Accepted photos and exact location follow the accepted record's sensitivity and retention decision and are not published automatically.", "Structured identity snapshots are scrubbed. Free text is not silently rewritten; possible identifiers create a restricted review task.", "Backups expire after 35 days and a deletion ledger prevents erased identity from returning to active state. A case-specific legal hold must be separately approved, encrypted, expiring and audited.", "The requester receives tracked status and a completion or safe failure response. The verified privacy contact will be published before production."]}
       ]
     },
     {
       "type": "subprocessors",
       "slug": "subprocessors",
       "locale": "en",
-      "version": "draft-2026-08-12",
-      "title": "TerraLeb Subprocessors: Approval Pending",
+      "version": "draft-owner-2026-09-05",
+      "title": "TerraLeb Service Providers",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
-      "summary": "The final production vendor entities and regions have not been approved.",
+      "summary": "Owner-selected service categories for Lebanon v1. Exact active provider entities and effective dates are published only after contract and deployment verification.",
       "sections": [
-        {"heading": "Potential service categories", "paragraphs": ["Production can use hosting/database/storage/backup, email, phone verification, Firebase push, map services, monitoring/support and an AI service."], "bullets": ["[DECISION REQUIRED: actual legal entity, purpose, data, region, safeguards, effective date and change notice for each active service]."]}
+        {"heading": "Selected production services", "paragraphs": ["The selected hosting target is OCI Saudi Arabia West (Jeddah), with private PostgreSQL/block storage and private OCI object/backup buckets. Conditional external services are a contracted SMTP provider, Firebase Cloud Messaging, ArcGIS online basemaps and an approved Earth Engine plan. OpenStreetMap Foundation supplies the modest interactive Street tile service. No SMS, advertising or behavioral analytics provider is used in v1."], "bullets": ["The exact contracting legal entity, purpose, data, region, safeguards, effective date and change-notice process for each active provider must be copied from executed records before this page is approved.", "The final page lists only services actually enabled in the deployed configuration.", "Provider changes require inventory, security, transfer, notice and store-disclosure review before activation."]}
       ]
     },
     {
       "type": "open_source",
       "slug": "open-source",
       "locale": "en",
-      "version": "draft-2026-08-12",
+      "version": "draft-owner-2026-09-05",
       "title": "Open-source and Data-source Notices",
       "status": "draft",
       "effectiveAt": null,
       "counselApproved": false,
-      "summary": "The app exposes bundled Flutter licenses separately. Container/backend SBOM and license review remain release evidence.",
+      "summary": "TerraLeb presents bundled Flutter notices and release-specific backend/container dependency inventories. Final release evidence includes a reviewed SBOM and source attribution.",
       "sections": [
         {"heading": "Software", "paragraphs": ["TerraLeb includes open-source software subject to its authors' license terms. Use the in-app software licenses view for Flutter packages and consult the release SBOM for backend/container components."], "bullets": []},
         {"heading": "Maps and data", "paragraphs": ["OpenStreetMap, Esri, satellite and imported datasets have separate attribution and usage rules that are not replaced by software licenses."], "bullets": ["OpenStreetMap data/copyright: https://www.openstreetmap.org/copyright", "Esri legal information: https://www.esri.com/legal"]}

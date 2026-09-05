@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
+import { pipeline } from 'node:stream/promises';
 
 const AdmZip = require('adm-zip');
 const { DOMParser } = require('@xmldom/xmldom');
@@ -3085,11 +3086,14 @@ const processImportJob = async (importJobId: string): Promise<void> => {
 
   const job = jobResult.rows[0];
   let parsed: ParsedImportPayload;
+  let materializedImportReference: string | null = null;
   try {
     const verifiedPath = await resolveStoredImportPath(job.file_path);
     if (!verifiedPath) {
       throw new AppError('The stored import path is outside the managed import area.', 422);
     }
+    materializedImportReference =
+      storageAdapter.resolve(job.file_path, ['uploads'])?.reference ?? null;
     const storedBuffer = await fs.readFile(verifiedPath);
     const storedChecksum = crypto.createHash('sha256').update(storedBuffer).digest('hex');
     if (storedChecksum !== job.file_checksum_sha256) {
@@ -3117,6 +3121,17 @@ const processImportJob = async (importJobId: string): Promise<void> => {
       message,
     });
     return;
+  } finally {
+    if (materializedImportReference) {
+      await storageAdapter
+        .releaseLocalCopy(materializedImportReference, ['uploads'])
+        .catch((cleanupError: unknown) => {
+          logger.warn('Failed to release a materialized GIS import cache file', {
+            importJobId,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        });
+    }
   }
 
   if (parsed.features.length === 0) {
@@ -4666,12 +4681,38 @@ const downloadImport = async (req: Request, res: Response): Promise<void> => {
   if (!canDownload) {
     throw new AppError('You are not allowed to download this import file.', 403);
   }
-  const filePath = await resolveStoredImportPath(job.file_path);
-  if (!filePath) {
+  const resolved =
+    typeof job.file_path === 'string' ? storageAdapter.resolve(job.file_path, ['uploads']) : null;
+  if (
+    !resolved ||
+    !['.private/imports/', 'imports/'].some((prefix) => resolved.key.startsWith(prefix))
+  ) {
     throw new AppError('The original import file is no longer available for download.', 404);
   }
-
-  res.download(filePath, job.original_filename);
+  let stored;
+  try {
+    stored = await storageAdapter.info(resolved.reference, ['uploads']);
+  } catch {
+    throw new AppError('The original import file is no longer available for download.', 404);
+  }
+  const safeFilename = Array.from(path.basename(String(job.original_filename ?? 'terraleb-import')))
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127 || character === '"' || character === '\\'
+        ? '_'
+        : character;
+    })
+    .join('')
+    .trim();
+  res.setHeader('Content-Type', stored.contentType ?? 'application/octet-stream');
+  res.setHeader('Content-Length', String(stored.size));
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${safeFilename || 'terraleb-import'}"; filename*=UTF-8''${encodeURIComponent(
+      safeFilename || 'terraleb-import',
+    )}`,
+  );
+  await pipeline(await storageAdapter.openReadStream(resolved.reference, ['uploads']), res);
 };
 
 const listImportComments = async (req: Request, res: Response): Promise<void> => {

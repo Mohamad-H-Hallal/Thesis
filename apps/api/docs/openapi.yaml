@@ -3,7 +3,7 @@ info:
   title: TerraLeb API
   version: 1.2.0
   description: >
-    Government field data collection API for projects, assignments, geospatial features,
+    GIS field data collection API for projects, assignments, geospatial features,
     exports, notifications, and administration.
 servers:
   - url: /
@@ -21,6 +21,7 @@ tags:
   - name: Exports
   - name: Imports
   - name: Offline / Sync
+  - name: Maps
   - name: Settings
   - name: Users
   - name: Legal
@@ -3548,6 +3549,104 @@ paths:
           description: Current offline map version, source, size, checksum, and download metadata
         '401':
           description: Unauthorized
+        '404':
+          description: No verified offline package is currently published
+  /api/v1/offline-map/current/download:
+    get:
+      tags: [Offline / Sync]
+      security:
+        - bearerAuth: []
+      summary: Download the current private TerraLeb offline package with resume support
+      parameters:
+        - in: header
+          name: Range
+          required: false
+          schema:
+            type: string
+          description: A single byte range used to resume an interrupted package download.
+      responses:
+        '200':
+          description: Complete checksum-verified package
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Requested package byte range
+        '401':
+          description: Unauthorized
+        '403':
+          description: Contributor or administrator role required
+        '404':
+          description: No verified offline package is currently published
+        '416':
+          description: Invalid or unsatisfiable byte range
+  /api/v1/maps/provider:
+    get:
+      tags: [Maps]
+      security:
+        - bearerAuth: []
+      summary: Get the current online hybrid-provider state and exact attribution
+      responses:
+        '200':
+          description: Provider state, attribution, tile templates, and fallback style
+        '401':
+          description: Unauthorized
+  /api/v1/maps/tiles/{layer}/{z}/{y}/{x}:
+    get:
+      tags: [Maps]
+      security:
+        - bearerAuth: []
+      summary: Fetch an authenticated, Lebanon-bounded online hybrid tile
+      parameters:
+        - in: path
+          name: layer
+          required: true
+          schema:
+            type: string
+            enum: [imagery, reference]
+        - in: path
+          name: z
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 20
+        - in: path
+          name: y
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+        - in: path
+          name: x
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Provider tile
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid tile coordinates
+        '401':
+          description: Unauthorized
+        '404':
+          description: Tile outside the Lebanon service area
+        '429':
+          description: Per-user map tile rate limit reached
+        '503':
+          description: Provider disabled, unavailable, unauthorized, or over quota
   /uploads/ai-validation/{storageName}:
     get:
       tags: [Photos]
@@ -4212,6 +4311,9 @@ components:
         help_text:
           type: string
           nullable: true
+        hybrid_basemap_enabled:
+          type: boolean
+          description: Protected-super-admin provider outage and quota kill switch.
     CreateAdminRequest:
       type: object
       required: [email, password, full_name]

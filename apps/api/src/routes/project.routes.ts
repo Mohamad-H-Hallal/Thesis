@@ -325,7 +325,7 @@ router.post(
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
-  authorize('admin'),
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.publishProjectAiRun),
 );
 
@@ -335,7 +335,7 @@ router.post(
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
-  authorize('admin'),
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.unpublishProjectAiRun),
 );
 
