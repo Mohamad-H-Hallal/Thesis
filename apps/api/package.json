@@ -85,7 +85,7 @@
     "libphonenumber-js": "^1.13.10",
     "morgan": "^1.11.0",
     "multer": "^2.2.0",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.1.1",
     "pg": "^8.18.0",
     "protobufjs": "7.6.5",
     "rate-limit-redis": "4.3.1",
