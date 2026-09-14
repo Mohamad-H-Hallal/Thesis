@@ -72,7 +72,9 @@ const runDatabaseBackup = async (): Promise<Record<string, unknown>> => {
     maxObjectBytes: positiveInteger('BACKUP_MAX_BYTES', 20 * 1024 * 1024 * 1024),
     requestTimeoutMs: positiveInteger('STORAGE_S3_REQUEST_TIMEOUT_MS', 30000),
     maxAttempts: positiveInteger('STORAGE_S3_MAX_ATTEMPTS', 3),
-    serverSideEncryption: 'AES256',
+    serverSideEncryption:
+      process.env.STORAGE_S3_SERVER_SIDE_ENCRYPTION === 'AES256' ? 'AES256' : 'SSE-C',
+    customerKeyBase64: process.env.STORAGE_S3_CUSTOMER_KEY_BASE64,
     buckets: { uploads: bucket, exports: bucket, offline: bucket, ai: bucket, backups: bucket },
   });
 

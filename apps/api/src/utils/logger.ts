@@ -24,7 +24,7 @@ const logsDir = path.resolve(
 );
 
 const sensitiveKeyPattern =
-  /(?:authorization|cookie|password|passphrase|token|otp|verification[_-]?code|secret|private[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
+  /(?:authorization|cookie|password|passphrase|token|otp|verification[_-]?code|secret|private[_-]?key|customer[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
 
 const sanitizeLogString = (value: string): string =>
   value
@@ -35,11 +35,11 @@ const sanitizeLogString = (value: string): string =>
     .replace(/\b(?:\+?961|0)?(?:3|70|71|76|78|79|81)\d{6}\b/g, REDACTED)
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi, `$1${REDACTED}:${REDACTED}@`)
     .replace(
-      /\b(password|passphrase|token|secret|private[_-]?key|smtp[_-]?pass)\s*[:=]\s*([^\s,;]+)/gi,
+      /\b(password|passphrase|token|secret|private[_-]?key|customer[_-]?key|smtp[_-]?pass)\s*[:=]\s*([^\s,;]+)/gi,
       `$1=${REDACTED}`,
     )
     .replace(
-      /(["']?(?:authorization|password|passphrase|access[_-]?token|refresh[_-]?token|otp|verification[_-]?code|secret|private[_-]?key|credential)["']?\s*:\s*)["'][^"']*["']/gi,
+      /(["']?(?:authorization|password|passphrase|access[_-]?token|refresh[_-]?token|otp|verification[_-]?code|secret|private[_-]?key|customer[_-]?key|credential)["']?\s*:\s*)["'][^"']*["']/gi,
       `$1"${REDACTED}"`,
     );
 

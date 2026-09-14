@@ -35,10 +35,14 @@ const validProductionEnv = (overrides = {}) => ({
   REALTIME_LEGACY_BROADCAST_ENABLED: 'false',
   REALTIME_POLLING_FALLBACK_ENABLED: 'false',
   STORAGE_DRIVER: 's3',
-  STORAGE_S3_ENDPOINT: 'https://fixture.compat.objectstorage.me-jeddah-1.oraclecloud.com',
-  STORAGE_S3_REGION: 'me-jeddah-1',
-  STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('oci-access-fixture'),
-  STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('oci-secret-fixture'),
+  STORAGE_S3_PROVIDER: 'digitalocean_spaces',
+  STORAGE_S3_ENDPOINT: 'https://fra1.digitaloceanspaces.com',
+  STORAGE_S3_REGION: 'fra1',
+  STORAGE_S3_FORCE_PATH_STYLE: 'false',
+  STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('spaces-access-fixture'),
+  STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('spaces-secret-fixture'),
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'SSE-C',
+  STORAGE_S3_CUSTOMER_KEY_BASE64: Buffer.alloc(32, 9).toString('base64'),
   STORAGE_S3_UPLOADS_BUCKET: 'terraleb-fixture-uploads',
   STORAGE_S3_EXPORTS_BUCKET: 'terraleb-fixture-exports',
   STORAGE_S3_OFFLINE_BUCKET: 'terraleb-fixture-offline',
@@ -145,10 +149,14 @@ describe('Phase 5 production security controls', () => {
     [{ PHONE_VERIFICATION_PROVIDER: 'mock' }, 'PHONE_VERIFICATION_PROVIDER=twilio_verify'],
     [{ VERIFICATION_HMAC_SECRET: 'replace-with-secret' }, 'VERIFICATION_HMAC_SECRET'],
     [{ STORAGE_DRIVER: 'local' }, 'STORAGE_DRIVER=s3'],
-    [{ STORAGE_S3_REGION: 'eu-frankfurt-1' }, 'region me-jeddah-1'],
+    [{ STORAGE_S3_PROVIDER: 'oci' }, 'provider must be digitalocean_spaces'],
+    [{ STORAGE_S3_REGION: 'ams3' }, 'region fra1'],
+    [{ STORAGE_S3_ENDPOINT: 'https://ams3.digitaloceanspaces.com' }, 'Spaces FRA1 endpoint'],
+    [{ STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256' }, 'must use SSE-C'],
+    [{ STORAGE_S3_CUSTOMER_KEY_BASE64: '' }, '32-byte customer key'],
     [
       { STORAGE_S3_SECRET_ACCESS_KEY: 'replace-with-storage-secret' },
-      'OCI S3 credentials',
+      'DigitalOcean Spaces credentials',
     ],
     [{ REALTIME_LEGACY_BROADCAST_ENABLED: 'true' }, 'legacy broadcasting'],
     [{ REALTIME_POLLING_FALLBACK_ENABLED: 'true' }, 'polling fallback disabled'],
@@ -224,10 +232,14 @@ describe('Phase 5 production security controls', () => {
       WORKLOAD_WORKER_MODE: 'external',
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
       STORAGE_DRIVER: 's3',
-      STORAGE_S3_ENDPOINT: 'https://fixture.compat.objectstorage.me-jeddah-1.oraclecloud.com',
-      STORAGE_S3_REGION: 'me-jeddah-1',
-      STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('oci-access-fixture'),
-      STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('oci-secret-fixture'),
+      STORAGE_S3_PROVIDER: 'digitalocean_spaces',
+      STORAGE_S3_ENDPOINT: 'https://fra1.digitaloceanspaces.com',
+      STORAGE_S3_REGION: 'fra1',
+      STORAGE_S3_FORCE_PATH_STYLE: 'false',
+      STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('spaces-access-fixture'),
+      STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('spaces-secret-fixture'),
+      STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'SSE-C',
+      STORAGE_S3_CUSTOMER_KEY_BASE64: Buffer.alloc(32, 9).toString('base64'),
       STORAGE_S3_UPLOADS_BUCKET: 'terraleb-fixture-uploads',
       STORAGE_S3_EXPORTS_BUCKET: 'terraleb-fixture-exports',
       STORAGE_S3_OFFLINE_BUCKET: 'terraleb-fixture-offline',
@@ -283,6 +295,7 @@ describe('Phase 5 production security controls', () => {
         geometry: { type: 'Point', coordinates: [1, 2] },
         attributes: { owner: 'sensitive-field-data' },
         storagePath: 'tenant/project/private-object.jpg',
+        storageS3CustomerKeyBase64: Buffer.alloc(32, 5).toString('base64'),
         safeCount: 3,
       },
     });
@@ -293,12 +306,14 @@ describe('Phase 5 production security controls', () => {
     expect(redacted.nested.geometry).toBe('[REDACTED]');
     expect(redacted.nested.attributes).toBe('[REDACTED]');
     expect(redacted.nested.storagePath).toBe('[REDACTED]');
+    expect(redacted.nested.storageS3CustomerKeyBase64).toBe('[REDACTED]');
     expect(redacted.nested.safeCount).toBe(3);
 
     const line = sanitizeLogString(
-      'Authorization: Bearer abc.def.ghi redis://user:password@valkey:6379',
+      'Authorization: Bearer abc.def.ghi redis://user:password@valkey:6379 customer_key=never-log-this',
     );
     expect(line).not.toContain('abc.def.ghi');
     expect(line).not.toContain('user:password');
+    expect(line).not.toContain('never-log-this');
   });
 });

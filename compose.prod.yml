@@ -218,9 +218,11 @@ services:
       VERIFICATION_HMAC_SECRET: ""
       VERIFICATION_HMAC_SECRET_FILE: /run/secrets/verification_hmac_secret
       STORAGE_S3_ACCESS_KEY_ID: ""
-      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_s3_access_key_id
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/spaces_s3_access_key_id
       STORAGE_S3_SECRET_ACCESS_KEY: ""
-      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_s3_secret_access_key
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/spaces_s3_secret_access_key
+      STORAGE_S3_CUSTOMER_KEY_BASE64: ""
+      STORAGE_S3_CUSTOMER_KEY_BASE64_FILE: /run/secrets/spaces_s3_customer_key
       ARCGIS_CLIENT_ID: ""
       ARCGIS_CLIENT_ID_FILE: /run/secrets/arcgis_client_id
       ARCGIS_CLIENT_SECRET: ""
@@ -247,8 +249,9 @@ services:
       - privacy_export_encryption_key
       - verification_hmac_secret
       - firebase_service_account
-      - oci_s3_access_key_id
-      - oci_s3_secret_access_key
+      - spaces_s3_access_key_id
+      - spaces_s3_secret_access_key
+      - spaces_s3_customer_key
       - arcgis_client_id
       - arcgis_client_secret
     volumes:
@@ -298,6 +301,10 @@ services:
         max-file: "10"
 
   ai-server:
+    # The 8 GB core host cannot safely co-host the 12 GB AI workload. This
+    # profile is only for a reviewed 16 GB+ single-host staging fallback;
+    # production AI uses the separately approved private on-demand service.
+    profiles: ["ai-local"]
     image: ${AI_SERVER_IMAGE:?Set an immutable production AI image with a sha256 digest}
     platform: ${AI_SERVER_PLATFORM:-linux/amd64}
     init: true
@@ -315,9 +322,9 @@ services:
       DB_PASSWORD: ""
       AI_CALLBACK_SECRET: ""
       AI_INTERNAL_API_SECRET: ""
-      GEE_PROJECT_ID: ${GEE_PROJECT_ID:?Set the operator-owned Earth Engine project ID}
-      GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:?Set the Earth Engine service-account email}
-      GEE_ASSET_FOLDER: ${GEE_ASSET_FOLDER:?Set the approved Earth Engine asset folder}
+      GEE_PROJECT_ID: ${GEE_PROJECT_ID:-}
+      GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
+      GEE_ASSET_FOLDER: ${GEE_ASSET_FOLDER:-}
       GEE_PRIVATE_KEY_PATH: /run/secrets/gee_service_account
       GEE_KEY_FILE: /run/secrets/gee_service_account
     secrets:
@@ -342,6 +349,9 @@ services:
         export DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/db_runtime_password)";
         export AI_CALLBACK_SECRET="$$(tr -d '\r\n' < /run/secrets/ai_callback_secret)";
         export AI_INTERNAL_API_SECRET="$$(tr -d '\r\n' < /run/secrets/ai_internal_api_secret)";
+        : "$${GEE_PROJECT_ID:?GEE_PROJECT_ID is required for the ai-local profile}";
+        : "$${GEE_SERVICE_ACCOUNT:?GEE_SERVICE_ACCOUNT is required for the ai-local profile}";
+        : "$${GEE_ASSET_FOLDER:?GEE_ASSET_FOLDER is required for the ai-local profile}";
         exec python -m uvicorn ai_server:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"
@@ -395,16 +405,19 @@ services:
       PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: ""
       PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/privacy_export_encryption_key
       STORAGE_S3_ACCESS_KEY_ID: ""
-      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_s3_access_key_id
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/spaces_s3_access_key_id
       STORAGE_S3_SECRET_ACCESS_KEY: ""
-      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_s3_secret_access_key
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/spaces_s3_secret_access_key
+      STORAGE_S3_CUSTOMER_KEY_BASE64: ""
+      STORAGE_S3_CUSTOMER_KEY_BASE64_FILE: /run/secrets/spaces_s3_customer_key
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     secrets:
       - db_runtime_password
       - privacy_export_encryption_key
-      - oci_s3_access_key_id
-      - oci_s3_secret_access_key
+      - spaces_s3_access_key_id
+      - spaces_s3_secret_access_key
+      - spaces_s3_customer_key
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
@@ -456,16 +469,19 @@ services:
       DB_PASSWORD: ""
       DB_PASSWORD_FILE: /run/secrets/db_admin_password
       STORAGE_S3_ACCESS_KEY_ID: ""
-      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_backup_s3_access_key_id
+      STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/spaces_backup_s3_access_key_id
       STORAGE_S3_SECRET_ACCESS_KEY: ""
-      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_backup_s3_secret_access_key
+      STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/spaces_backup_s3_secret_access_key
+      STORAGE_S3_CUSTOMER_KEY_BASE64: ""
+      STORAGE_S3_CUSTOMER_KEY_BASE64_FILE: /run/secrets/spaces_backup_s3_customer_key
       BACKUP_ENCRYPTION_KEY_BASE64: ""
       BACKUP_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/backup_encryption_key
       BACKUP_TEMP_DIR: /backup-work
     secrets:
       - db_admin_password
-      - oci_backup_s3_access_key_id
-      - oci_backup_s3_secret_access_key
+      - spaces_backup_s3_access_key_id
+      - spaces_backup_s3_secret_access_key
+      - spaces_backup_s3_customer_key
       - backup_encryption_key
     volumes:
       - database_backup_work:/backup-work
@@ -641,14 +657,18 @@ secrets:
     file: ${VERIFICATION_HMAC_SECRET_FILE_HOST:-./secrets/verification_hmac_secret.txt}
   firebase_service_account:
     file: ${FIREBASE_SERVICE_ACCOUNT_SECRET_FILE:-./secrets/firebase_service_account.json}
-  oci_s3_access_key_id:
-    file: ${OCI_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/oci_s3_access_key_id.txt}
-  oci_s3_secret_access_key:
-    file: ${OCI_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/oci_s3_secret_access_key.txt}
-  oci_backup_s3_access_key_id:
-    file: ${OCI_BACKUP_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/oci_backup_s3_access_key_id.txt}
-  oci_backup_s3_secret_access_key:
-    file: ${OCI_BACKUP_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/oci_backup_s3_secret_access_key.txt}
+  spaces_s3_access_key_id:
+    file: ${SPACES_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/spaces_s3_access_key_id.txt}
+  spaces_s3_secret_access_key:
+    file: ${SPACES_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/spaces_s3_secret_access_key.txt}
+  spaces_s3_customer_key:
+    file: ${SPACES_S3_CUSTOMER_KEY_SECRET_FILE:-./secrets/spaces_s3_customer_key.txt}
+  spaces_backup_s3_access_key_id:
+    file: ${SPACES_BACKUP_S3_ACCESS_KEY_ID_SECRET_FILE:-./secrets/spaces_backup_s3_access_key_id.txt}
+  spaces_backup_s3_secret_access_key:
+    file: ${SPACES_BACKUP_S3_SECRET_ACCESS_KEY_SECRET_FILE:-./secrets/spaces_backup_s3_secret_access_key.txt}
+  spaces_backup_s3_customer_key:
+    file: ${SPACES_BACKUP_S3_CUSTOMER_KEY_SECRET_FILE:-./secrets/spaces_backup_s3_customer_key.txt}
   backup_encryption_key:
     file: ${BACKUP_ENCRYPTION_KEY_SECRET_FILE:-./secrets/backup_encryption_key.txt}
   arcgis_client_id:

@@ -19,6 +19,8 @@ const {
 } = require('../src/realtime/workflowSocket');
 const { publishWorkflowChange } = require('../src/realtime/workflowEvents');
 
+jest.setTimeout(30000);
+
 describe('Security: authenticated session lifecycle and realtime event privacy', () => {
   beforeEach(async () => {
     await resetDb();

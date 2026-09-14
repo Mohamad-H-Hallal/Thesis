@@ -1,5 +1,9 @@
 # TerraLeb map and regional-hosting decision
 
+> **Hosting selection superseded again on 2026-09-05.** The active hosting
+> record is `TERRALEB_DIGITALOCEAN_HOSTING_DECISION_V2.md`. Retain this file
+> only as map/legal analysis and decision history.
+
 > **Superseded for execution on 2026-08-25:** use
 > [`TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md`](TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md)
 > for the current repository baseline, corrected OCI USD pricing, final storage

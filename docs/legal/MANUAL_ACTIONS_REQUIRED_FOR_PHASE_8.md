@@ -1,6 +1,6 @@
 # TerraLeb Phase 8 assisted external-evidence register
 
-Last updated: 2026-08-26
+Last updated: 2026-09-05
 Release: Android and web v1, Lebanon
 Production authorization: **blocked**
 
@@ -12,9 +12,9 @@ Never put passwords, payment-card data, access tokens, customer secret keys, ser
 
 | Sequence | External item | Responsible person/provider | Status | Dependency |
 |---:|---|---|---|---|
-| 1 | OCI tenancy and Jeddah region | TerraLeb operations owner / Oracle | Awaiting assisted setup | None |
+| 1 | DigitalOcean account, team and Frankfurt candidate region | TerraLeb operations owner / DigitalOcean | Awaiting assisted setup | None |
 | 2 | Legal operator facts and production domain | TerraLeb legal/release owner | Awaiting owner facts and decision | None; needed before public DNS/Play |
-| 3 | OCI compartment, IAM, storage and backup credentials | Operations owner / OCI | Blocked | 1 |
+| 3 | DigitalOcean project, Droplet, firewall, Spaces and scoped credentials | Operations owner / DigitalOcean | Blocked | 1 |
 | 4 | ArcGIS online application | GIS owner / Esri | Engineering ready; external setup and live measurement blocked | Operator identity and account |
 | 5 | Copernicus and OSM offline source evidence | GIS owner / Copernicus + Geofabrik/approved extract provider | Builder ready; source acquisition/package build blocked | Account/source approval |
 | 6 | Production AI image and Earth Engine plan | AI owner / registry + Google Cloud | TerraLeb boundary ready; external AI source remediation/image/provider evidence blocked | Operator account and AI source work |
@@ -28,23 +28,23 @@ Never put passwords, payment-card data, access tokens, customer secret keys, ser
 | 14 | Staging proof and live measurements | Engineering/operations/GIS/AI owners | Awaiting accounts and credentials | 1–8 |
 | 15 | Exact-build production authorization | Named TerraLeb release owner | Last action; blocked | Every applicable finding approved |
 
-## 1. OCI tenancy and Jeddah home region
+## 1. DigitalOcean account, team and Frankfurt candidate region
 
 **Owner action sequence — perform only one numbered action when Codex asks for it:**
 
-1. Open `https://cloud.oracle.com/`. Sign in to an organization-owned OCI account, or choose **Sign up** if none exists. Complete identity, password, payment and MFA privately.
-2. During tenancy creation, select **Saudi Arabia West (Jeddah)** / `me-jeddah-1` as the home region. The home region cannot normally be changed after tenancy creation; stop before confirming if Jeddah is not shown.
-3. After sign-in, open the region selector in the top bar and confirm **Saudi Arabia West (Jeddah)**.
-4. Open **Profile → Tenancy: [name]** (or **Governance & Administration → Account Management → Tenancy Details**) and confirm the tenancy OCID and home region. Do not paste the full OCID in chat.
-5. Open **Billing & Cost Management → Budgets → Create Budget**. Scope it to the future TerraLeb compartment. Before paid resources exist, set an initial monthly alert threshold of **USD 200** and notifications to an organization-controlled operations mailbox. Budget alerts do not cap usage.
+1. Open `https://cloud.digitalocean.com/registrations/new` and create or sign in to an operator-controlled DigitalOcean account. Enter passwords, payment details and MFA only on DigitalOcean; never send them in chat.
+2. Create or select a team owned by the real TerraLeb operator. The team name is operational metadata and does not prove the application's legal controller.
+3. Open **Settings → Security** and enable MFA. Add a second protected owner only when a real authorized person exists; do not create a shared login.
+4. Open **Settings → Billing → Spend alerts** and create alerts at USD 50 and USD 70/month. Alerts warn but do not cap spending.
+5. Do not create a Droplet yet. Confirm that **Frankfurt 1 (`fra1`)** is available in the create-Droplet region list, then stop. DigitalOcean has no Middle East region; live latency from Lebanon and the international-transfer/provider decision must pass before production approval.
 
-**Cost/effect:** account creation may require payment verification. No compute/storage charge starts merely from validating the tenancy. The currently selected stack is OCI E4 Flex x86, 4 OCPU/32 GB, 300 GB balanced block plus private object/archive storage. At current public rates the infrastructure baseline is approximately **USD 160–180/month before tax, domain, SMTP, ArcGIS overage, Earth Engine and counsel**. Terraform `apply` is a separate paid action and requires explicit approval.
+**Cost/effect:** account creation/payment verification does not itself authorize infrastructure creation. The reviewed starting baseline is an 8 GB Basic Droplet at USD 48/month, weekly backups at USD 9.60/month, and Standard Spaces at USD 5/month: approximately **USD 62.60/month or USD 751.20/year** before tax and optional services. A 2 GB Droplet is not approved for production because the existing core services cannot safely fit. Terraform `apply` is a separate paid action and requires explicit approval.
 
-**Evidence:** redacted Tenancy Details showing `me-jeddah-1`; budget name/amount/alert recipients; accepted provider agreement/version. Store outside Git if the screenshot contains tenancy identifiers. Record an immutable evidence-system reference in the readiness file.
+**Evidence:** redacted team/account ownership, MFA enabled state, spend-alert thresholds, `fra1` availability, and accepted provider agreement/DPA versions. Store sensitive screenshots outside Git and record only immutable evidence-system references in the readiness file.
 
-**Codex verification:** confirm the page through the signed-in browser when permitted; later run `tofu plan` with redacted output and `node scripts/verify-production-config.js`. Do not set `hostingRegionsAndSubprocessors` approved until the provider terms, data-flow and subprocessor records match the exact tenancy.
+**Codex verification:** confirm the page through the signed-in browser when permitted; later run a redacted Terraform plan, Lebanon latency test and `node scripts/verify-production-config.js`. Do not approve `hostingRegionsAndSubprocessors` until the DigitalOcean DPA/terms, Frankfurt data flow and exact deployment evidence match.
 
-Official references: `https://docs.oracle.com/en-us/iaas/Content/General/Concepts/regions.htm`, `https://www.oracle.com/sa/a/ocom/docs/corporate/pricing/oracle-paas-and-iaas-global-price-list.pdf`.
+Official references: `https://docs.digitalocean.com/platform/regional-availability/`, `https://www.digitalocean.com/pricing/droplets`, `https://docs.digitalocean.com/products/backups/details/pricing/`, `https://docs.digitalocean.com/products/spaces/details/pricing/`, `https://www.digitalocean.com/legal/data-processing-agreement`.
 
 ## 2. Legal operator facts and production domain
 
@@ -59,19 +59,21 @@ Official references: `https://docs.oracle.com/en-us/iaas/Content/General/Concept
 
 **Codex verification/gates:** DNS ownership lookup, TLS/host/origin/WebSocket tests, public logged-out legal routes and `productionIdentifiersVerified`. The domain is not evidence of legal-controller identity by itself.
 
-## 3. OCI compartment, IAM and two storage identities
+## 3. DigitalOcean project, private storage and two runtime identities
 
-1. In OCI open **Identity & Security → Compartments → Create Compartment**. Name it `terraleb-prod`; place it under the operator tenancy; use a non-sensitive description.
-2. Create separate groups/dynamic groups or workload identities for deployment, application-object access and backup-only access. Do not run TerraLeb using the tenancy administrator.
-3. Apply the reviewed least-privilege policies generated by `infra/oci/terraform`; Codex must show the plan before any `apply`.
-4. Open **Identity & Security → Domains → [default domain] → Users → [workload user] → Customer secret keys → Generate secret key**. Create separate S3-compatible keys for application buckets and backup bucket. The secret is shown once: place it directly into the organization password manager and later the server secret file; never send it to Codex.
-5. Create private buckets through the reviewed Terraform: uploads, exports, offline packages, AI outputs and backups. Public access must remain disabled; versioning/lifecycle/encryption follow the runbook.
+1. Create a private, versioned FRA1 Space for Terraform state, configure 35-day non-current-version expiry, and create a state-only Spaces key plus a distinct 32-byte SSE-C key. Supply credentials only through environment variables; never through backend arguments, Git, plans or chat.
+2. Create a restricted short-lived DigitalOcean infrastructure token and a temporary full-access Spaces provisioning key. Enter both only as local `TF_VAR_*` variables; never place them in Git, Terraform files, state, plans or chat.
+3. Complete a read-only Terraform plan from `infra/digitalocean/terraform`. It creates the `TerraLeb production` project, private VPC, restricted firewall, 8 GB x86 Droplet, assigned Reserved IP, weekly backups and five private versioned application/backup Spaces in `fra1`.
+4. Codex shows the exact provider plan and current checkout prices. The owner explicitly approves or rejects the recurring cost before `apply`.
+5. After an approved apply, revoke the temporary provisioning key. In **API → Spaces Keys**, create one key with read/write/delete access to uploads, exports, offline and AI buckets, and a different backup-only key for the backup bucket.
+6. Generate separate 32-byte SSE-C keys for application objects and backup objects directly into protected server secret files. Loss of an SSE-C key makes affected objects unrecoverable; keep encrypted offline recovery copies in the approved key-custody system.
+7. Keep every Space private. Do not enable CDN, public listing or public ACL. Verify cross-bucket denial, checksum, range downloads, cleanup and an isolated database restore.
 
-**Cost/effect:** this step starts charges only when Terraform creates compute/block/object resources. Estimated resources and rollback are in `docs/predeployment/phase-2-oci-object-storage-and-backup-runbook.md`.
+**Cost/effect:** charges begin when the approved plan creates the Droplet or first Space. The baseline and rollback are in `docs/predeployment/phase-2-digitalocean-storage-and-backup-runbook.md`.
 
-**Evidence:** redacted IAM policies; bucket visibility/encryption/lifecycle pages; key-created timestamps (not key values); `tofu plan/apply` hash; object authorization and backup/restore results.
+**Evidence:** redacted team/project/firewall/backups and bucket visibility/versioning pages; runtime key scope and creation timestamps (never values); plan/apply hashes; object authorization and backup/restore results.
 
-**Configuration:** secret paths named in `.env.prod.example`; S3 endpoint is `https://<namespace>.compat.objectstorage.me-jeddah-1.oraclecloud.com`. Codex verifies cross-bucket denial, checksum, streaming, expiry, encrypted backup and isolated restore before approval.
+**Configuration:** secret paths are named in `.env.prod.example`; the S3 endpoint is `https://fra1.digitaloceanspaces.com`. DigitalOcean Spaces uses SSE-C for TerraLeb objects, while database backups and privacy exports retain their additional application-layer AES-256-GCM envelopes.
 
 ## 4. ArcGIS online Hybrid application
 
