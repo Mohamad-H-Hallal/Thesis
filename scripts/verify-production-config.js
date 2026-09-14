@@ -276,12 +276,13 @@ assert(
     alloyDockerfile.includes('golang.org/x/mod@v0.40.0') &&
     alloyDockerfile.includes('golang.org/x/text@v0.41.0') &&
     alloyDockerfile.includes('google.golang.org/grpc@v1.83.1') &&
+    alloyDockerfile.includes("Components:.*$/Components: main/") &&
     alloyDockerfile.includes('bsdutils=1:2.39.3-9ubuntu6.6') &&
     alloyDockerfile.includes('libp11-kit0=0.25.3-4ubuntu2.2') &&
     alloyDockerfile.includes('libssl3t64=3.0.13-0ubuntu3.15') &&
     alloyDockerfile.includes('libsystemd0=255.4-1ubuntu8.17') &&
     alloyDockerfile.includes('perl-base=5.38.2-3.2ubuntu0.4') &&
-    alloyDockerfile.includes('libc6=2.39-0ubuntu8.8') &&
+    alloyDockerfile.includes('libc6=2.39-0ubuntu8.9') &&
     alloyDockerfile.includes('libpam0g=1.5.3-5ubuntu5.7') &&
     alloyDockerfile.includes('tar=1.35+dfsg-3ubuntu0.4'),
   'Alloy security rebuild must pin source, patched Go modules, and OS updates',
