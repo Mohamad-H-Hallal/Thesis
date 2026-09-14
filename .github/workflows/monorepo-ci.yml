@@ -9,6 +9,8 @@ concurrency:
 
 on:
   push:
+    branches:
+      - handover-ready
     paths:
       - 'apps/mobile/**'
       - '.github/workflows/monorepo-ci.yml'
