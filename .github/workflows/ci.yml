@@ -9,6 +9,8 @@ concurrency:
 
 on:
   push:
+    branches:
+      - handover-ready
     paths:
       - 'apps/api/**'
       - '.github/workflows/ci.yml'
